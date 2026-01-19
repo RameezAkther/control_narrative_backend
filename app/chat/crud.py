@@ -62,18 +62,20 @@ def add_message(
     content: str, 
     context_ids: list = [], 
     document_ids: list = [],
-    citations: list = []  # <--- THIS ARGUMENT WAS MISSING
+    citations: list = [],
+    mode: str = "RAG",     # <--- ADD THIS
+    artifacts: list = []   # <--- ADD THIS
 ):
-    """
-    Saves a message (User or Assistant) to MongoDB.
-    """
     msg = ChatMessageModel(
         session_id=session_id,
         user_id=user_id,
         role=role,
         content=content,
         active_context_ids=context_ids,
-        citations=citations  # <--- Pass it to the model here
+        citations=citations,
+        document_ids=document_ids, # (Optional: ensure your model has this field if you want to store it)
+        mode=mode,             # <--- ADD THIS
+        artifacts=artifacts    # <--- ADD THIS
     )
     
     result = chat_messages_collection.insert_one(
@@ -96,3 +98,5 @@ def get_session_messages(session_id: str, user_id: str):
         {"session_id": session_id, "user_id": user_id}
     ).sort("created_at", 1)
     return [ChatMessageModel(**m) for m in msgs]
+
+

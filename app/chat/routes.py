@@ -17,10 +17,7 @@ def create_chat(
     current_user = Depends(get_current_user)
 ):
     """Create a new chat session."""
-    # We pass the Pydantic model as a dict
     session_id = crud.create_chat_session(str(current_user["_id"]), payload.model_dump())
-    
-    # Fetch and return the created session
     new_session = crud.get_chat_session(session_id, str(current_user["_id"]))
     return new_session
 
@@ -35,7 +32,6 @@ def get_chat_history(
     current_user = Depends(get_current_user)
 ):
     """Load messages when opening a chat."""
-    # Verify access
     session = crud.get_chat_session(chat_id, str(current_user["_id"]))
     if not session:
         raise HTTPException(status_code=404, detail="Chat not found")
@@ -70,6 +66,7 @@ def delete_chat(
     return {"status": "deleted"}
 
 # --- Messaging (The Core Logic) ---
+
 @router.post("/{chat_id}/message", response_model=schemas.MessageResponse)
 async def send_message(
     chat_id: str,
@@ -90,7 +87,9 @@ async def send_message(
         role="user",
         content=payload.message,
         context_ids=payload.active_context_ids,
-        document_ids=payload.document_ids
+        document_ids=payload.document_ids,
+        mode=payload.mode,         # <--- ADDED: Save user's selected mode
+        artifacts=payload.artifacts # <--- ADDED: Save user's selected artifacts
     )
 
     # 3. GENERATE AI RESPONSE (RAG)
@@ -98,18 +97,15 @@ async def send_message(
     citations_data = []
 
     try:
-        # --- FIX IS HERE: Unpack the tuple (text, citations) ---
         response_tuple = await rag_engine.generate_response(
             query=payload.message,
             document_ids=payload.document_ids,
             active_context_ids=payload.active_context_ids
         )
         
-        # Safe unpacking
         if isinstance(response_tuple, tuple):
             ai_response_text, citations_data = response_tuple
         else:
-            # Fallback if engine returns just string (backward compatibility)
             ai_response_text = response_tuple
             
     except Exception as e:
@@ -118,14 +114,15 @@ async def send_message(
         citations_data = []
 
     # 4. Save ASSISTANT Message
-    # Now 'content' is strictly a string, and 'citations' handles the list
     ai_message = crud.add_message(
         session_id=chat_id,
         user_id=user_id,
         role="assistant",
-        content=ai_response_text,     # <--- Must be String
+        content=ai_response_text,
         document_ids=payload.document_ids,
-        citations=citations_data      # <--- Must be List[dict]
+        citations=citations_data,
+        mode=payload.mode,          # <--- ADDED: Save the mode used for generation
+        artifacts=payload.artifacts # <--- ADDED: Save the artifacts used
     )
 
     return ai_message

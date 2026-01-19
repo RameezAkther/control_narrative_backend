@@ -142,7 +142,7 @@ class RAGEngine:
         # 3. Construct Prompt
         prompt = ChatPromptTemplate.from_messages([
             SystemMessage(content=(
-                "You are an intelligent assistant analyzing technical control narratives. "
+                "You are an intelligent assistant analyzing technical control narratives documents. "
                 "Use the provided context to answer the user's question accurately. "
                 "If the answer is not in the context, state that you cannot find it in the documents."
             )),
