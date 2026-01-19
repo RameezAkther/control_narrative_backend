@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+import os
+
 from app.auth.routes import router as auth_router
 from app.users.routes import router as user_router
 from app.documents.routes import router as documents_router
-from dotenv import load_dotenv
-import os
+from app.chat.routes import router as chat_router
 
 load_dotenv()
 print(os.getenv("GOOGLE_API_KEY"))
@@ -32,6 +34,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(documents_router)
+app.include_router(chat_router)
 
 @app.get("/")
 def home():

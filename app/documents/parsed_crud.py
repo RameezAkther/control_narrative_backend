@@ -1,9 +1,7 @@
 from datetime import datetime
 from bson import ObjectId
 
-from db.database import db
-
-parsed_collection = db["parsed_documents"]
+from db.database import parsed_documents_collection as parsed_collection
 
 def create_parsed_document(document_id, user_id, parsing_strategy: str = "fast", parsed_folder: str = None):
     doc = {
@@ -13,10 +11,14 @@ def create_parsed_document(document_id, user_id, parsing_strategy: str = "fast",
         "status": "uploading the document",
 
         # Reserve where parsed outputs and settings live
-        "document_agent": None,
-        "control_logic_agent": None,
-        "validator_agent": None,
-        "code_generator_agent": None,
+        "document_agent_output_file_path": None,
+        "document_image_parsed_output_file_path": None,
+        "embeddings_info": None,
+        "understanding_agent_output_file_path": None,
+        "control_logic_agent_output_file_path": None,
+        "mapper_agent_output_file_path": None,
+        "validator_agent_output_file_path": None,
+        "code_generator_agent_output_file_path": None,
 
         # Save requested parsing strategy for transparency
         "parsing_strategy": parsing_strategy,
@@ -25,18 +27,16 @@ def create_parsed_document(document_id, user_id, parsing_strategy: str = "fast",
         "parsed_folder": parsed_folder,
 
         "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow()
+        "updated_at": datetime.utcnow(),
     }
     return parsed_collection.insert_one(doc)
 
-def update_document_agent_output(document_id, output):
-    # Update the parsed content; do not mark the overall pipeline as completed here —
-    # further steps (embeddings, understanding, etc.) follow.
+def update_parsed_document(document_id, field_name, value):
     return parsed_collection.update_one(
         {"document_id": ObjectId(document_id)},
         {
             "$set": {
-                "document_agent": output,
+                field_name: value,
                 "updated_at": datetime.utcnow()
             }
         }
@@ -47,7 +47,7 @@ def update_parsed_embeddings_info(document_id, chroma_collection: str, persist_d
         {"document_id": ObjectId(document_id)},
         {
             "$set": {
-                "embeddings": {
+                "embeddings_info": {
                     "collection": chroma_collection,
                     "persist_directory": persist_directory
                 },

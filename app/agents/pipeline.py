@@ -10,6 +10,7 @@ from app.agents.code_generator_agent import CodeGeneratorRunner
 # Import Utils
 from app.utils.io_manager import create_output_dir, save_json, save_text, extract_json_from_result
 from app.documents.parsed_crud import update_progress
+from app.documents.parsed_crud import update_parsed_document
 
 def run_agent_pipeline(md_file_path: str, document_id: str = None):
     if not os.getenv("GOOGLE_API_KEY"):
@@ -42,6 +43,7 @@ def run_agent_pipeline(md_file_path: str, document_id: str = None):
     # Extract & Save
     summary_json = extract_json_from_result(summary_result)
     save_json(summary_json, output_dir, "1_summary.json")
+    update_parsed_document(document_id, "understanding_agent_output_file_path", os.path.join(output_dir, "1_summary.json"))
 
     update_progress(
         document_id,
@@ -64,7 +66,7 @@ def run_agent_pipeline(md_file_path: str, document_id: str = None):
     # Extract & Save
     logic_json = extract_json_from_result(logic_result)
     save_json(logic_json, output_dir, "2_logic_extracted.json")
-    
+    update_parsed_document(document_id, "control_logic_agent_output_file_path", os.path.join(output_dir, "2_logic_extracted.json"))
     # NOTE: We do NOT convert to string here anymore for the next agent
     # logic_str = json.dumps(logic_json, indent=2) <--- REMOVED
 
@@ -90,7 +92,7 @@ def run_agent_pipeline(md_file_path: str, document_id: str = None):
     # Extract & Save
     mapping_json = extract_json_from_result(mapping_result)
     save_json(mapping_json, output_dir, "3_loop_map.json")
-    
+    update_parsed_document(document_id, "mapper_agent_output_file_path", os.path.join(output_dir, "3_loop_map.json"))
     update_progress(
         document_id,
         step="loop_mapper_completed",
@@ -113,7 +115,8 @@ def run_agent_pipeline(md_file_path: str, document_id: str = None):
     # Extract & Save
     validation_json = extract_json_from_result(validation_result)
     save_json(validation_json, output_dir, "4_validation.json")
-    
+    update_parsed_document(document_id, "validator_agent_output_file_path", os.path.join(output_dir, "4_validation.json"))
+
     update_progress(
         document_id,
         step="validator_agent_completed",
@@ -128,7 +131,7 @@ def run_agent_pipeline(md_file_path: str, document_id: str = None):
 
     final_code = str(code_result)
     save_text(final_code, output_dir, "5_plc_code.st")
-
+    update_parsed_document(document_id, "code_generator_agent_output_file_path", os.path.join(output_dir, "5_plc_code.st"))
     update_progress(
         document_id,
         step="code_generator_completed",

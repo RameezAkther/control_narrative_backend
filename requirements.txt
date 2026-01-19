@@ -17,5 +17,8 @@ docling-core
 chromadb
 sentence-transformers
 crewai
+langchain
 langchain-google-genai
 ollama
+langchain-chroma
+langchain-huggingface

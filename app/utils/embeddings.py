@@ -64,7 +64,7 @@ def embed_and_persist_document(
                 if fname.lower().endswith('_enriched.md'):
                     md_path = os.path.join(parsed_folder, fname)
                     break
-        
+        print(md_path)
         if not md_path or not os.path.exists(md_path):
              # Return empty if no content found, rather than crashing
             print(f"Warning: No markdown found in {parsed_folder}, skipping embeddings.")

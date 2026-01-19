@@ -1,9 +1,8 @@
 from datetime import datetime
 from bson.objectid import ObjectId
 
-from db.database import db
+from db.database import documents_collection
 
-documents_collection = db["documents"]
 
 def save_document(user_id: str, filename: str, filepath: str):
     doc = {

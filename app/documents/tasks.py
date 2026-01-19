@@ -1,16 +1,35 @@
 from bson import ObjectId
+from pathlib import Path
 import os
 
 from app.agents.document_agent import DocumentAgent
 from app.agents import image_parser_agent
 from app.agents import pipeline
 from app.documents.parsed_crud import (
-    update_document_agent_output,
+    update_parsed_document,
+    update_parsed_embeddings_info,
     update_progress
 )
-from db.database import db
+from db.database import parsed_documents_collection as parsed_collection
 
-parsed_collection = db["parsed_documents"]
+def mock_image_parser(md_file_path, output_dir, new_filename):
+    md_file_path = Path(md_file_path)
+    output_dir = Path(output_dir)
+
+    # Check source file
+    if not md_file_path.exists() or md_file_path.suffix != ".md":
+        raise FileNotFoundError("Source markdown file not found or invalid")
+    # Create output directory if needed
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Read content
+    content = md_file_path.read_text(encoding="utf-8")
+
+    # Write to new markdown file
+    output_file = output_dir / new_filename
+    output_file.write_text(content, encoding="utf-8")
+
+    print(f"Copied markdown to: {output_file.resolve()}")
 
 def process_document_pipeline(document_id: str, file_path: str, parsing_strategy: str = "fast", parsed_folder: str = None):
     """
@@ -37,7 +56,7 @@ def process_document_pipeline(document_id: str, file_path: str, parsing_strategy
         if parsed_folder:
             parsed_output.setdefault("metadata", {})
             parsed_output["metadata"]["parsed_folder"] = parsed_folder
-        update_document_agent_output(document_id, parsed_output)
+        update_parsed_document(document_id, "document_agent_output_file_path",parsed_output["metadata"]["markdown_path"])
 
         update_progress(
             document_id,
@@ -53,8 +72,14 @@ def process_document_pipeline(document_id: str, file_path: str, parsing_strategy
         )
 
         print("Running Image Parser Agent...")
-        image_parser_agent.run_image_parser(parsed_output["metadata"]["markdown_path"], parser_type= 2 if parsing_strategy == "accurate" else 1)
-        
+        # image_parser_agent.run_image_parser(parsed_output["metadata"]["markdown_path"], parser_type= 2 if parsing_strategy == "accurate" else 1)
+        mock_image_parser(
+            md_file_path=parsed_output["metadata"]["markdown_path"],
+            output_dir=os.path.dirname(parsed_output["metadata"]["markdown_path"]),
+            new_filename=os.path.basename(parsed_output["metadata"]["markdown_path"]).replace(".md", "_enriched.md")
+        )
+        update_parsed_document(document_id, "document_image_parsed_output_file_path", parsed_output["metadata"]["markdown_path"]+"_enriched.md")
+
         update_progress(
             document_id,
             step="image_parsing",
@@ -85,7 +110,6 @@ def process_document_pipeline(document_id: str, file_path: str, parsing_strategy
             )
 
             # Persist info about embeddings
-            from app.documents.parsed_crud import update_parsed_embeddings_info
             update_parsed_embeddings_info(document_id, emb_info.get("collection_name"), emb_info.get("persist_directory"))
 
             update_progress(
@@ -108,6 +132,7 @@ def process_document_pipeline(document_id: str, file_path: str, parsing_strategy
             step="agent_pipeline",
             message="Running document agent pipeline"
         )
+
         print("Running Agent Pipeline...")
         for fname in os.listdir(parsed_folder):
                 if fname.lower().endswith('.md'):
