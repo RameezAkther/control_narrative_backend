@@ -2,12 +2,12 @@ import os
 import json
 import re
 import time
-from typing import List, Dict, Any
-from crewai import Agent, Task, Crew, Process
+from typing import List, Dict, Union
+from crewai import Agent, Task, Crew
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # ==============================================================================
-# The Agent Runner (Modular & Batched)
+# The Code Generator Runner (Single-Shot Efficiency)
 # ==============================================================================
 
 class CodeGeneratorRunner:
@@ -15,139 +15,132 @@ class CodeGeneratorRunner:
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             verbose=True,
-            temperature=0,
+            temperature=0.1, # Low temp for syntax accuracy
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
+        self.MAX_LOOPS_SINGLE_SHOT = 2000
 
     def clean_code_output(self, text: str) -> str:
-        """Strips Markdown and extra chatter."""
-        # Remove ```iecst, ```st, or just ``` lines
+        """Strips Markdown and extra chatter to leave raw PLC code."""
+        # 1. Remove Markdown code blocks (```st, ```iecst, ```)
         text = re.sub(r'```[a-zA-Z]*', '', str(text))
         text = re.sub(r'```', '', text)
-        return text.strip()
+        
+        # 2. Trim whitespace
+        text = text.strip()
+        
+        # 3. Ensure it looks like code (simple heuristic)
+        if "PROGRAM" not in text and "VAR" not in text:
+            text = f"(* Generated Code Fragment *)\n{text}"
+            
+        return text
 
-    def _batch_loops(self, loops: List[Dict], batch_size=5) -> List[List[Dict]]:
-        return [loops[i:i + batch_size] for i in range(0, len(loops), batch_size)]
-
-    def run(self, logic_data: Dict, validation_report: Dict) -> str:
+    def run(self, logic_data: Union[Dict, List], validation_report: Dict) -> str:
         """
+        Generates the full IEC 61131-3 Structured Text program.
         Args:
-            logic_data: The dictionary output from ValidatorRunner (or LogicAgent).
-            validation_report: The dictionary output from ValidatorRunner.
+            logic_data: The list of control loops (sensors, actuators, interlocks).
+            validation_report: The report containing strategy types and criticality.
         """
         
-        # 1. Extract Valid Loops
-        raw_loops = logic_data.get('loops', [])
+        # 1. Normalize Input
+        if isinstance(logic_data, dict):
+            raw_loops = logic_data.get('loops', [])
+        else:
+            raw_loops = logic_data
+            
         if not raw_loops:
-            # Fallback
-            raw_loops = logic_data if isinstance(logic_data, list) else []
+            return "(* No Control Loops provided to generate code. *)"
 
-        print(f"🏭 Code Gen: Preparing to write code for {len(raw_loops)} loops...")
+        # 2. Enrich Loops with Strategy Info (from Validation Report if available)
+        # We try to map the specific strategy (PID vs Interlock) to the loop
+        enriched_loops = []
+        issues_map = {i.get('loop_name'): i for i in validation_report.get('issues', [])}
+        
+        # If the validation report contains the full context, use that instead
+        # (This depends on how you pass data between agents. We assume raw_loops is the source of truth).
+        
+        print(f"🏭 Code Gen: Generating Full PLC Program for {len(raw_loops)} loops...")
 
-        # 2. Define Agents
-        architect = Agent(
-            role='PLC Architect',
-            goal='Define all VAR_INPUT, VAR_OUTPUT, and internal VARs.',
-            backstory="You are a strict compiler. You declare every single tag found in the requirements.",
+        # 3. Check Size
+        if len(raw_loops) > self.MAX_LOOPS_SINGLE_SHOT:
+            print(f"⚠️ Truncating to {self.MAX_LOOPS_SINGLE_SHOT} loops.")
+            raw_loops = raw_loops[:self.MAX_LOOPS_SINGLE_SHOT]
+
+        # 4. Define Agents
+        # We use one "Lead Developer" to ensure the VARs and Logic are consistent.
+        lead_dev = Agent(
+            role='Senior PLC Developer',
+            goal='Write a complete, compilable IEC 61131-3 Structured Text (ST) program.',
+            backstory=(
+                "You are an expert in CODESYS and TIA Portal. "
+                "You MUST declare every variable used. "
+                "You write defensive code: Interlocks always override Control logic. "
+                "You use standard Hungarian Notation (e.g., xStart, rLevel, iState)."
+            ),
             llm=self.llm,
             verbose=True,
             allow_delegation=False
         )
 
-        developer = Agent(
-            role='Senior PLC Developer',
-            goal='Write efficient Structured Text (ST) logic for specific loops.',
-            backstory="You write clean IF/THEN/ELSE and PID function blocks.",
-            llm=self.llm,
-            verbose=False, # Reduce noise for batching
-            allow_delegation=False
-        )
+        # 5. Prepare Context
+        context_str = json.dumps(raw_loops, indent=2)
 
-        # --- PHASE 1: HEADER GENERATION ---
-        print("\n📝 Generating PLC Header (Variables)...")
-        
-        # We send a truncated list if huge to avoid context limits for the header prompt
-        # Ideally, you'd want to extract just the tags first, but for now we send the structure
-        header_task = Task(
+        task = Task(
             description=(
-                f"Analyze these Control Loops:\n{json.dumps(raw_loops[:50], indent=2)} "
-                f"\n(List truncated if > 50)...\n\n"
-                "TASK:\n"
-                "1. Extract ALL unique Tag Names (inputs and outputs) from the provided JSON.\n"
-                "2. Generate the 'VAR', 'VAR_INPUT', and 'VAR_OUTPUT' blocks.\n"
-                "3. Assume standard data types (BOOL for switches, REAL for transmitters).\n"
-                "4. Return ONLY the variable declaration text."
+                "Generate a COMPLETE IEC 61131-3 Structured Text program for the following system:\n"
+                "================================================================\n"
+                f"{context_str}\n"
+                "================================================================\n\n"
+                "**REQUIREMENTS:**\n"
+                "1. **Structure**: Wrap the code in `PROGRAM MainControl ... END_PROGRAM`.\n"
+                "2. **Variables**: Generate a `VAR` block declaring ALL sensors, actuators, and internal states. Use `BOOL` for switches/valves and `REAL` for transmitters.\n"
+                "3. **Logic**: Write the logic for each loop.\n"
+                "   - If it's a **Motor/Pump**: Implement Start/Stop logic with Interlocks overriding the Start command.\n"
+                "   - If it's a **Valve**: Implement Open/Close logic.\n"
+                "   - If it's a **PID**: Call a hypothetical `FB_PID` block (do not write the PID internals, just the call).\n"
+                "4. **Comments**: Add comments explaining which loop the code belongs to.\n"
+                "5. **Output**: Return ONLY the raw code. No markdown formatting."
             ),
-            expected_output="IEC 61131-3 Variable Declaration Block.",
-            agent=architect
+            expected_output="Raw IEC 61131-3 Structured Text code.",
+            agent=lead_dev
         )
 
-        header_crew = Crew(
-            agents=[architect],
-            tasks=[header_task],
+        # 6. Execute
+        crew = Crew(
+            agents=[lead_dev],
+            tasks=[task],
             verbose=True
         )
-        
-        header_result = header_crew.kickoff()
-        
-        final_code_parts = []
-        if hasattr(header_result, 'raw'):
-            final_code_parts.append(self.clean_code_output(header_result.raw))
-        else:
-            final_code_parts.append(self.clean_code_output(str(header_result)))
 
-        # --- PHASE 2: LOGIC GENERATION (Batched) ---
-        print("\n⚙️ Generating Logic Blocks...")
-        
-        batches = self._batch_loops(raw_loops, batch_size=5)
-        
-        for i, batch in enumerate(batches):
-            print(f"   Writing Logic for Batch {i+1}/{len(batches)}...")
+        try:
+            print("🚀 Generating Code...")
+            start_time = time.time()
+            result = crew.kickoff()
+            elapsed = time.time() - start_time
+            print(f"✅ Code generation complete in {elapsed:.2f} seconds.")
+
+            # Robust Extraction
+            raw_output = ""
+            if hasattr(result, 'raw'):
+                raw_output = result.raw
+            else:
+                raw_output = str(result)
             
-            task = Task(
-                description=(
-                    f"Write Structured Text (ST) logic for this BATCH of loops:\n\n"
-                    f"{json.dumps(batch, indent=2)}\n\n"
-                    "RULES:\n"
-                    "1. Use standard IEC 61131-3 syntax.\n"
-                    "2. Handle interlocks: IF (Interlock_Condition) THEN Output := FALSE; END_IF;\n"
-                    "3. Return ONLY the code logic. Do NOT repeat VAR declarations."
-                ),
-                expected_output="Structured Text Logic Snippet.",
-                agent=developer
-            )
+            cleaned_code = self.clean_code_output(raw_output)
+            return cleaned_code
 
-            # Isolate Task
-            crew = Crew(
-                agents=[developer],
-                tasks=[task],
-                verbose=False
-            )
+        except Exception as e:
+            print(f"❌ Code Gen Failed: {e}")
+            return f"(* Error generating code: {e} *)"
 
-            try:
-                result = crew.kickoff()
-                output_text = ""
-                if hasattr(result, 'raw'):
-                    output_text = result.raw
-                else:
-                    output_text = str(result)
-                
-                cleaned = self.clean_code_output(output_text)
-                final_code_parts.append(f"\n(* --- Batch {i+1} Logic --- *)\n{cleaned}")
-                print(f"   ✅ Batch {i+1} written.")
-
-            except Exception as e:
-                print(f"   ❌ Error writing Batch {i+1}: {e}")
-                final_code_parts.append(f"\n(* Error generating Batch {i+1} *)")
-
-            # Rate Limiting
-            time.sleep(2)
-
-        # --- FINAL ASSEMBLY ---
-        full_program = "\n\n".join(final_code_parts)
-        
-        # Wrap in PROGRAM block if missing
-        if "PROGRAM" not in full_program:
-            full_program = f"PROGRAM MainControl\n{full_program}\nEND_PROGRAM"
-
-        return full_program
+# ==============================================================================
+# Usage Example
+# ==============================================================================
+# if __name__ == "__main__":
+#     mock_loops = [
+#         {"loop_name": "P-101", "inputs": [{"tag": "LIT-101", "role": "Sensor"}], "outputs": [{"tag": "P-101-CMD", "role": "Actuator"}]}
+#     ]
+#     runner = CodeGeneratorRunner()
+#     code = runner.run(mock_loops, {})
+#     print(code)

@@ -1,207 +1,200 @@
 import os
 import json
-import re
 import time
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from pydantic import BaseModel, Field
 
 # CrewAI imports
-from crewai import Agent, Task, Crew, Process
+from crewai import Agent, Task, Crew
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # ==============================================================================
-# 1. Output Schema (Unchanged)
+# 1. Output Schema (Refined for Better Extraction)
 # ==============================================================================
 
 class ControlElement(BaseModel):
-    tag: Optional[str] = Field(default="Unknown", description="The instrument tag (e.g., 'LIT-101').")
-    name: Optional[str] = Field(default="Unnamed Component", description="The name of the element.")
-    role: Optional[str] = Field(default="Unknown", description="Role: 'Sensor', 'Actuator', etc.")
+    tag: str = Field(..., description="The instrument tag (e.g., 'LIT-101', 'P-101'). Do not use generic names.")
+    name: str = Field(..., description="The descriptive name found in the document (e.g., 'Feed Tank Level', 'Booster Pump'). Infer from context if not explicit.")
+    role: str = Field(..., description="Must be one of: 'Sensor', 'Actuator', 'Setpoint', 'Switch', 'Controller'.")
 
 class Interlock(BaseModel):
-    condition: Optional[str] = Field(default="Unspecified condition", description="The logical condition.")
-    action: Optional[str] = Field(default="Unspecified action", description="The action taken.")
-    type: Optional[str] = Field(default="Process", description="Type: 'Safety', 'Process', etc.")
+    condition: str = Field(..., description="The specific condition causing the action (e.g., 'Level < 20% for 5s').")
+    action: str = Field(..., description="The consequence (e.g., 'Trip Pump P-101', 'Inhibit Start').")
+    type: str = Field(default="Process", description="Category: 'Safety Interlock', 'Process Interlock', or 'Permissive'.")
 
 class ControlLoop(BaseModel):
-    loop_name: Optional[str] = Field(default="Unnamed Loop", description="Name of the loop.")
-    description: Optional[str] = Field(default="No description provided.", description="Brief description.")
-    inputs: List[ControlElement] = Field(default_factory=list, description="List of sensors/inputs.")
-    outputs: List[ControlElement] = Field(default_factory=list, description="List of actuators/outputs.")
-    interlocks: List[Interlock] = Field(default_factory=list, description="List of specific logic conditions.")
+    loop_name: str = Field(..., description="A descriptive name for the loop (e.g. 'Feed Tank Level Control').")
+    description: str = Field(..., description="Summary of the control strategy (PID, On/Off, Sequence).")
+    inputs: List[ControlElement] = Field(default_factory=list, description="Sensors and signals affecting this loop.")
+    outputs: List[ControlElement] = Field(default_factory=list, description="Actuators and devices controlled by this loop.")
+    interlocks: List[Interlock] = Field(default_factory=list, description="Safety trips, start permissives, and auto-shutdowns.")
 
 class LogicExtractionResult(BaseModel):
-    loops: List[ControlLoop] = Field(default_factory=list, description="A list of all identified control loops.")
+    loops: List[ControlLoop] = Field(default_factory=list, description="A comprehensive list of all identified control loops.")
 
 # ==============================================================================
-# 2. The Agent Runner (Fault-Tolerant Batching)
+# 2. The Logic Runner (Single-Shot / Hybrid)
 # ==============================================================================
 
 class LogicAgentRunner:
-    def __init__(self, model_name="gemini-2.0-flash-exp"):
+    def __init__(self, model_name="gemini-2.5-flash"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             verbose=True,
-            temperature=0,
-            google_api_key=os.getenv("GOOGLE_API_KEY")
+            temperature=0.1, # Low temp for precision
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            safety_settings={
+                "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE", 
+                "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
+                "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
+            }
+        )
+        # Limit for Single-Shot (approx 800k tokens to be safe)
+        self.MAX_SINGLE_SHOT_CHARS = 3_200_000 
+        self.CHUNK_SIZE_CHARS = 100_000
+
+    def _construct_full_context(self, sections: List[Dict]) -> str:
+        """Merges all sections into one massive text block with navigation headers."""
+        full_text = []
+        for sec in sections:
+            title = sec.get('title', 'Untitled')
+            content = sec.get('content', '')
+            full_text.append(f"\n# SECTION START: {title}")
+            full_text.append(content)
+            full_text.append(f"# SECTION END: {title}")
+            full_text.append("-" * 40)
+        return "\n".join(full_text)
+
+    def run(self, sections: List[Dict], summary_context: Dict = None) -> Dict[str, Any]:
+        
+        # 1. Flatten document
+        full_text = self._construct_full_context(sections)
+        doc_length = len(full_text)
+        
+        print(f"📄 Logic Extraction: Document Loaded. Length: {doc_length:,} chars.")
+
+        # 2. Add Summary Context if available (helps ground the model)
+        context_str = ""
+        if summary_context:
+            context_str = f"SYSTEM OVERVIEW (Use for context):\n{json.dumps(summary_context, indent=2)}\n\n"
+
+        # 3. Strategy Selection
+        if doc_length < self.MAX_SINGLE_SHOT_CHARS:
+            print("🟢 Strategy: SINGLE-SHOT (Best Quality)")
+            return self._run_single_shot(full_text, context_str)
+        else:
+            print("🔴 Strategy: MAP-REDUCE (Too large, falling back)")
+            return self._run_map_reduce(full_text, context_str)
+
+    # --------------------------------------------------------------------------
+    # Strategy A: Single Shot (The Fix for "Unknown Components")
+    # --------------------------------------------------------------------------
+    def _run_single_shot(self, text: str, context_prefix: str):
+        agent = Agent(
+            role='Senior Automation Logic Engineer',
+            goal='Extract detailed Control Loops, matching Tags to their Descriptions across the entire document.',
+            backstory=(
+                "You are an expert FDS analyst. "
+                "CRITICAL: When you find a tag like 'PT-1000' in a logic sentence, "
+                "you IMMEDIATELY look back at the Instrument Schedule or Definitions section "
+                "to find its name (e.g. 'Discharge Pressure'). "
+                "You never output 'Unnamed Component' if the definition exists anywhere in the text."
+            ),
+            llm=self.llm,
+            verbose=True
         )
 
-    def _create_chunks(self, sections: List[Dict], max_chunk_size=15000) -> List[str]:
-        chunks = []
-        current_chunk = ""
-        for sec in sections:
-            sec_text = f"\n--- SECTION: {sec.get('title', 'Unknown')} ---\n"
-            sec_text += sec.get('content', '') + "\n"
-            if len(current_chunk) + len(sec_text) > max_chunk_size:
-                if current_chunk: chunks.append(current_chunk)
-                current_chunk = sec_text
-            else:
-                current_chunk += sec_text
-        if current_chunk: chunks.append(current_chunk)
-        return chunks
+        task = Task(
+            description=(
+                "Analyze the COMPLETE document below to extract Control Logic.\n"
+                "================================================================\n"
+                f"{context_prefix}"
+                f"{text}\n"
+                "================================================================\n\n"
+                "**INSTRUCTIONS:**\n"
+                "1. **Identify Loops**: Group logic by equipment/system (e.g. 'Booster Pump Control').\n"
+                "2. **Resolve Tags**: For every input/output tag, find its real name in the document. Do not use 'Unknown'.\n"
+                "3. **Extract Interlocks**: explicit safety trips, start permissives, and auto-shutdowns.\n"
+                "4. **Output**: Return a JSON object strictly following the LogicExtractionResult schema."
+            ),
+            expected_output="A complete LogicExtractionResult JSON.",
+            agent=agent,
+            output_json=LogicExtractionResult
+        )
 
-    def _clean_json_string(self, raw_text: str) -> str:
-        """Helper to extract valid JSON from LLM chatter."""
-        try:
-            # 1. Try finding content inside ```json ... ```
-            match = re.search(r"```json\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
-            if match: return match.group(1)
-            
-            # 2. Try finding content inside ``` ... ```
-            match = re.search(r"```\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
-            if match: return match.group(1)
+        crew = Crew(agents=[agent], tasks=[task], verbose=True)
+        return self._safe_extract(crew.kickoff())
 
-            # 3. Try finding first { and last }
-            start = raw_text.find('{')
-            end = raw_text.rfind('}')
-            if start != -1 and end != -1:
-                return raw_text[start:end+1]
-                
-            return raw_text
-        except:
-            return raw_text
-
-    def run(self, sections: List[Dict], summary_context: Dict = None):
-        doc_chunks = self._create_chunks(sections)
-        print(f"📄 Logic Extraction: Document split into {len(doc_chunks)} chunks.")
-
-        summary_str = ""
-        if summary_context:
-            summary_str = f"SYSTEM OVERVIEW CONTEXT:\n{json.dumps(summary_context, indent=2)}\n"
-
-        logic_analyst = Agent(
-            role='Control Logic Analyst',
-            goal='Extract exact Control Loops, I/O tags, and Logic from a text fragment.',
-            backstory="You are a detail-oriented engineer. You identify every control loop mentioned on the page.",
+    # --------------------------------------------------------------------------
+    # Strategy B: Map-Reduce (Only for > 1M tokens)
+    # --------------------------------------------------------------------------
+    def _run_map_reduce(self, text: str, context_prefix: str):
+        # Implementation of Map-Reduce for massive files (same logic as before, just larger chunks)
+        # Note: In 99% of cases, you won't hit this with Gemini 2.5 Flash.
+        chunks = self._split_text(text, self.CHUNK_SIZE_CHARS)
+        print(f"✂️ Split document into {len(chunks)} chunks.")
+        
+        all_loops = []
+        mapper = Agent(
+            role='Logic Analyst',
+            goal='Extract control loops from a text segment.',
+            backstory="You analyze fragments. Report tags exactly as seen.",
             llm=self.llm,
-            allow_delegation=False,
             verbose=False
         )
 
-        lead_automation_eng = Agent(
-            role='Lead Automation Engineer',
-            goal='Merge multiple lists of control loops into one robust Master List.',
-            backstory="You receive partial lists from your team and de-duplicate them.",
-            llm=self.llm,
-            allow_delegation=False,
-            verbose=True
-        )
-
-        # --- PHASE 1: MAP (Resilient Processing) ---
-        all_partial_results = []
-        print("\n🔄 Starting Batch Extraction (Map Phase)...")
-        
-        for i, chunk_text in enumerate(doc_chunks):
-            print(f"   Processing Chunk {i+1}/{len(doc_chunks)}...")
-            
+        for i, chunk in enumerate(chunks):
+            print(f"   Processing Chunk {i+1}/{len(chunks)}...")
             task = Task(
-                description=(
-                    f"Analyze this PARTIAL text (Chunk {i+1}/{len(doc_chunks)}) to find Control Logic.\n\n"
-                    f"{summary_str}\n"
-                    "TEXT TO ANALYZE:\n"
-                    f"{chunk_text}\n\n"
-                    "INSTRUCTIONS:\n"
-                    "1. Identify Control Loops visible in THIS text only.\n"
-                    "2. Extract Sensors (Inputs) and Actuators (Outputs).\n"
-                    "3. Extract Interlock/Logic conditions.\n"
-                    "4. Return a JSON object with a 'loops' key containing the list."
-                ),
-                expected_output="A valid JSON object containing extracted control loops.",
-                agent=logic_analyst
-                # REMOVED output_json to prevent auto-crash
+                description=f"Extract control logic from this fragment:\n\n{chunk}",
+                expected_output="Partial LogicExtractionResult JSON.",
+                agent=mapper,
+                output_json=LogicExtractionResult
             )
-
-            crew = Crew(agents=[logic_analyst], tasks=[task], verbose=False)
-
-            try:
-                result = crew.kickoff()
-                
-                # Manual Extraction logic to handle bad JSON gracefully
-                raw_output = str(result)
-                if hasattr(result, 'raw'): raw_output = result.raw
-                
-                clean_str = self._clean_json_string(raw_output)
-                
-                # Parse
-                data = json.loads(clean_str)
-                
-                # Validate using Pydantic manually
-                validated = LogicExtractionResult(**data)
-                
-                if validated.loops:
-                    print(f"   ✅ Chunk {i+1}: Found {len(validated.loops)} loops.")
-                    all_partial_results.extend(validated.loops)
-                else:
-                    print(f"   ⚠️ Chunk {i+1}: No loops found (Empty).")
-
-            except json.JSONDecodeError:
-                print(f"   ❌ Chunk {i+1} Failed: Invalid JSON output from LLM. Skipping chunk.")
-            except Exception as e:
-                print(f"   ❌ Chunk {i+1} Failed: {str(e)[:100]}... Skipping chunk.")
-
-            time.sleep(2) 
-
-        # --- PHASE 2: REDUCE ---
-        print(f"\n🧩 Starting Aggregation (Reduce Phase) with {len(all_partial_results)} raw loops...")
-
-        if not all_partial_results:
-            return {"loops": []}
-
-        # Convert Pydantic models to dicts for JSON serialization
-        loops_data = [l.model_dump() for l in all_partial_results]
+            crew = Crew(agents=[mapper], tasks=[task], verbose=False)
+            res = self._safe_extract(crew.kickoff())
+            if res and 'loops' in res:
+                all_loops.extend(res['loops'])
         
-        # Batch the reducer if too many loops (avoid context limit)
-        # For simplicity, we assume < 500 loops fits in Gemini's massive window.
-        loops_context = json.dumps(loops_data, indent=2)
-
-        reduce_task = Task(
-            description=(
-                "Merge and Deduplicate these Control Loops.\n\n"
-                f"RAW DATA:\n{loops_context}\n\n"
-                "RULES:\n"
-                "1. Merge duplicate loops (e.g. 'Heater 1' vs 'Heater 1 Control').\n"
-                "2. Remove duplicate tags in inputs/outputs.\n"
-                "3. Return the final list as JSON."
-            ),
-            expected_output="The final merged LogicExtractionResult JSON.",
-            agent=lead_automation_eng,
-            output_json=LogicExtractionResult # We can keep strict mode here as input is cleaner
+        # Merge
+        reducer = Agent(
+            role='Lead Engineer', 
+            goal='Merge and Deduplicate Control Loops.', 
+            backstory="You merge partial lists into a master list.", 
+            llm=self.llm
         )
-
-        final_crew = Crew(
-            agents=[lead_automation_eng],
-            tasks=[reduce_task],
-            verbose=True
+        task = Task(
+            description=f"Merge these loops:\n{json.dumps(all_loops)[:500000]}...", # Truncate if insanely huge
+            expected_output="Final LogicExtractionResult JSON.",
+            agent=reducer,
+            output_json=LogicExtractionResult
         )
+        final_crew = Crew(agents=[reducer], tasks=[task], verbose=True)
+        return self._safe_extract(final_crew.kickoff())
 
+    # --------------------------------------------------------------------------
+    # Helpers
+    # --------------------------------------------------------------------------
+    def _split_text(self, text, chunk_size, overlap=2000):
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = start + chunk_size
+            chunks.append(text[start:end])
+            start = end - overlap 
+        return chunks
+
+    def _safe_extract(self, result):
+        """Robust extraction for Pydantic/JSON/Raw output."""
         try:
-            final_result = final_crew.kickoff()
-            if hasattr(final_result, 'json_dict') and final_result.json_dict:
-                return final_result.json_dict
-            elif hasattr(final_result, 'pydantic') and final_result.pydantic:
-                return final_result.pydantic.model_dump()
+            if hasattr(result, 'json_dict') and result.json_dict:
+                return result.json_dict
+            elif hasattr(result, 'pydantic') and result.pydantic:
+                return result.pydantic.model_dump()
+            elif hasattr(result, 'raw'):
+                clean = result.raw.replace('```json', '').replace('```', '').strip()
+                return json.loads(clean)
         except Exception as e:
-            print(f"❌ Reducer Failed: {e}. Returning raw aggregated list.")
-            return {"loops": loops_data}
-            
+            print(f"❌ Extraction Error: {e}")
         return {"loops": []}

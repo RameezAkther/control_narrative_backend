@@ -1,29 +1,28 @@
 import os
 import json
 import time
-from typing import List, Dict
+from typing import List, Dict, Any, Union
 from pydantic import BaseModel, Field
 
 # CrewAI imports
-from crewai import Agent, Task, Crew, Process
+from crewai import Agent, Task, Crew
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 # ==============================================================================
-# 1. Output Schema (Unchanged)
+# 1. Output Schema
 # ==============================================================================
 
 class ValidationIssue(BaseModel):
-    severity: str = Field(..., description="'Error' for blocking issues (missing tags), 'Warning' for minor ones.")
+    severity: str = Field(..., description="Level: 'Critical' (Safety risk), 'Error' (Missing component), 'Warning' (Best practice).")
     loop_name: str = Field(..., description="The name of the loop where the issue was found.")
-    message: str = Field(..., description="Description of the issue.")
-    suggestion: str = Field(..., description="Recommended fix.")
+    message: str = Field(..., description="Clear description of the problem.")
+    suggestion: str = Field(..., description="Actionable fix (e.g. 'Add Low Level Interlock to P-101').")
 
 class ValidationReport(BaseModel):
-    # We remove 'is_valid' here because we will calculate it based on the issue list size later
     issues: List[ValidationIssue] = Field(default_factory=list, description="List of all identified issues.")
 
 # ==============================================================================
-# 2. The Agent Runner (Robust Batching Version)
+# 2. The Validator Runner (Single-Shot Efficiency)
 # ==============================================================================
 
 class ValidatorRunner:
@@ -31,16 +30,25 @@ class ValidatorRunner:
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             verbose=True,
-            temperature=0,
+            temperature=0, # Zero temp for strict rule checking
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
+        # Safety limit for Single-Shot
+        self.MAX_LOOPS_SINGLE_SHOT = 2000
 
     def _merge_data(self, logic_loops: List[Dict], mapped_loops: List[Dict]) -> List[Dict]:
+        """
+        Combines Logic (Sensors/Actuators) with Mapping (Strategy/Criticality)
+        to create a rich context for validation.
+        """
         merged = []
+        # Create a lookup map for efficiency
         mapping_map = {m.get('loop_name'): m for m in mapped_loops}
+        
         for logic in logic_loops:
             l_name = logic.get('loop_name')
             mapping = mapping_map.get(l_name, {})
+            
             merged_item = {
                 "loop_id": l_name,
                 "components": {
@@ -57,97 +65,117 @@ class ValidatorRunner:
             merged.append(merged_item)
         return merged
 
-    def _batch_data(self, data: List[Dict], batch_size=5) -> List[List[Dict]]:
-        return [data[i:i + batch_size] for i in range(0, len(data), batch_size)]
+    def run(self, logic_data: Union[Dict, str], mapping_data: Union[Dict, str]) -> Dict[str, Any]:
+        """
+        Validates the entire control system in one pass.
+        """
+        
+        # 1. Input Parsing
+        if isinstance(logic_data, str): logic_data = json.loads(logic_data)
+        if isinstance(mapping_data, str): mapping_data = json.loads(mapping_data)
 
-    def run(self, logic_data: Dict, mapping_data: Dict) -> Dict:
         l_loops = logic_data.get('loops', [])
         m_mappings = mapping_data.get('mappings', [])
 
         if not l_loops:
-            return {"is_valid": True, "issues": [], "summary": "No loops to validate."}
+            print("⚠️ Validator: No loops to validate.")
+            return {"is_valid": True, "issues": [], "summary": "No data provided."}
 
-        full_loop_contexts = self._merge_data(l_loops, m_mappings)
+        # 2. Merge Data for Full Context
+        full_system_context = self._merge_data(l_loops, m_mappings)
+        loop_count = len(full_system_context)
         
-        batches = self._batch_data(full_loop_contexts, batch_size=5)
-        print(f"🕵️ Validator: Checking {len(full_loop_contexts)} loops across {len(batches)} batches.")
+        print(f"🕵️ Validator: Analyzing {loop_count} loops in SINGLE-SHOT mode...")
 
-        agent = Agent(
-            role='Control Systems QA Engineer',
-            goal='Validate control logic against best practices.',
-            backstory="You are the final gatekeeper. You check for missing interlocks, undefined tags, and logic gaps.",
+        # 3. Check Size Strategy
+        if loop_count > self.MAX_LOOPS_SINGLE_SHOT:
+            print(f"⚠️ Truncating {loop_count} loops to {self.MAX_LOOPS_SINGLE_SHOT} for safety.")
+            full_system_context = full_system_context[:self.MAX_LOOPS_SINGLE_SHOT]
+
+        # 4. Define Agent
+        qa_engineer = Agent(
+            role='Control Systems QA Lead',
+            goal='Audit the Control Narrative for completeness, safety, and logic gaps.',
+            backstory=(
+                "You are a strict QA Auditor. You check if High Criticality loops have Safety Interlocks. "
+                "You check if PID loops have both Sensors (Inputs) and Actuators (Outputs). "
+                "You flag vague names like 'Unknown Component'."
+            ),
             llm=self.llm,
-            verbose=False,
+            verbose=True,
             allow_delegation=False
         )
 
-        all_issues = []
+        # 5. Prepare Context
+        context_str = json.dumps(full_system_context, indent=2)
 
-        # --- PROCESS BATCHES ---
-        for i, batch in enumerate(batches):
-            print(f"   Validating Batch {i+1}/{len(batches)}...")
+        task = Task(
+            description=(
+                "Audit the following Control System definition:\n"
+                "================================================================\n"
+                f"{context_str}\n"
+                "================================================================\n\n"
+                "**VALIDATION RULES:**\n"
+                "1. **Completeness**: A PID Loop MUST have at least one Sensor and one Actuator.\n"
+                "2. **Safety**: Any loop marked 'Criticality: High' MUST have an Interlock or Safety Logic defined.\n"
+                "3. **Clarity**: Flag any component named 'Unknown', 'Unnamed', or 'TBD'.\n"
+                "4. **Consistency**: Ensure the Strategy Type matches the components (e.g., Don't call it 'PID' if it only has a switch).\n\n"
+                "**OUTPUT:**\n"
+                "Return a list of `ValidationIssue` objects for any violations found."
+            ),
+            expected_output="A ValidationReport JSON object.",
+            agent=qa_engineer,
+            output_json=ValidationReport
+        )
+
+        # 6. Execute
+        crew = Crew(
+            agents=[qa_engineer],
+            tasks=[task],
+            verbose=True
+        )
+
+        try:
+            print("🚀 Sending system audit request...")
+            start_time = time.time()
+            result = crew.kickoff()
+            elapsed = time.time() - start_time
+            print(f"✅ Validation complete in {elapsed:.2f} seconds.")
+
+            # Robust Extraction
+            report_data = {"issues": []}
+            if hasattr(result, 'json_dict') and result.json_dict:
+                report_data = result.json_dict
+            elif hasattr(result, 'pydantic') and result.pydantic:
+                report_data = result.pydantic.model_dump()
+            elif hasattr(result, 'raw'):
+                try:
+                    clean = result.raw.replace('```json', '').replace('```', '').strip()
+                    report_data = json.loads(clean)
+                except:
+                    pass
+
+            issues = report_data.get("issues", [])
+            print(f"🔍 Found {len(issues)} issues.")
             
-            batch_str = json.dumps(batch, indent=2)
-            
-            task = Task(
-                description=(
-                    f"Validate this BATCH of control loops:\n{batch_str}\n\n"
-                    "CHECK FOR:\n"
-                    "1. Missing Sensors/Actuators for the described strategy.\n"
-                    "2. Critical loops missing safety interlocks.\n"
-                    "3. Vagueness in descriptions.\n"
-                    "Return a JSON list of issues found."
-                ),
-                expected_output="JSON list of validation issues.",
-                agent=agent,
-                output_json=ValidationReport
-            )
+            return {
+                "is_valid": len(issues) == 0,
+                "issues": issues,
+                "total_checked": loop_count
+            }
 
-            # Isolate task
-            crew = Crew(
-                agents=[agent],
-                tasks=[task],
-                process=Process.sequential,
-                verbose=False
-            )
+        except Exception as e:
+            print(f"❌ Validation Failed: {e}")
+            return {"is_valid": False, "issues": [{"severity": "Error", "loop_name": "System", "message": str(e), "suggestion": "Check logs."}]}
 
-            try:
-                result = crew.kickoff()
-                
-                # Robust extraction
-                batch_report = None
-                if hasattr(result, 'json_dict') and result.json_dict:
-                    batch_report = result.json_dict
-                elif hasattr(result, 'pydantic') and result.pydantic:
-                    batch_report = result.pydantic.dict()
-                elif hasattr(result, 'raw'):
-                    try:
-                        clean = result.raw.replace('```json', '').replace('```', '')
-                        batch_report = json.loads(clean)
-                    except:
-                        pass
-
-                if batch_report and 'issues' in batch_report:
-                    count = len(batch_report['issues'])
-                    if count > 0:
-                        print(f"   ⚠️ Batch {i+1}: Found {count} issues.")
-                        all_issues.extend(batch_report['issues'])
-                    else:
-                        print(f"   ✅ Batch {i+1}: Clean.")
-                else:
-                    print(f"   ⚠️ Batch {i+1}: No valid output structure.")
-
-            except Exception as e:
-                print(f"   ❌ Error validating Batch {i+1}: {e}")
-
-            # RATE LIMITING
-            time.sleep(2)
-
-        # --- FINAL AGGREGATION ---
-        final_report = {
-            "issues": all_issues,
-            "is_valid": len(all_issues) == 0,
-            "total_checked": len(full_loop_contexts)
-        }
-        
-        return final_report
+# ==============================================================================
+# Usage Example
+# ==============================================================================
+# if __name__ == "__main__":
+#     # Mock Data
+#     logic_mock = {"loops": [{"loop_name": "P-101", "inputs": [], "outputs": [{"tag": "P-101"}]}]}
+#     mapping_mock = {"mappings": [{"loop_name": "P-101", "strategy_type": "PID Control", "criticality": "High"}]}
+#     
+#     runner = ValidatorRunner()
+#     report = runner.run(logic_mock, mapping_mock)
+#     print(json.dumps(report, indent=2))
