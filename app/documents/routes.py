@@ -178,7 +178,7 @@ def get_document_status(
         "validator_agent_pending",
         "validator_agent_completed",
         "code_generator_completed",
-        "completed"
+        "ready / completed"
     ]
 
     # Get the status key (step) and the specific message
@@ -193,6 +193,8 @@ def get_document_status(
     except ValueError:
         # If status isn't in the list (e.g. error), default to 0 or max
         stage = 0 if "fail" not in status_key.lower() else len(STATUS_ORDER)
+
+    print(f"Document {document_id} status: {status_key} (Stage {stage}/{len(STATUS_ORDER)})")
 
     return {
         "status": status_key,
