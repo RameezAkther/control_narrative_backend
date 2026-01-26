@@ -1,0 +1,41 @@
+# --- Python Basics ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual Environments (Common names) ---
+# It is critical to ignore the folder where you installed your libraries
+venv/
+env/
+.venv/
+
+# --- Environment Variables & Secrets ---
+# NEVER commit your API keys or database credentials
+.env
+.env.local
+
+# --- FastAPI / Web specific ---
+# If you are using SQLite for local testing
+*.sqlite3
+*.db
+
+# --- IDE Settings (VS Code, JetBrains) ---
+.vscode/
+.idea/
+
+# --- Data & ML (Relevant for AI/Image projects) ---
+# Ignore local vector stores (like ChromaDB) or large datasets
+chroma_db/
+datasets/
+models/
+app/documents/user_documents
+*.pth
+*.pt
+# Ignore heavy image files if you are processing them locally
+*.png
+*.jpg
+*.jpeg
+*.pdf
+dist/
+build/
+*.egg-info/

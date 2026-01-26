@@ -63,8 +63,9 @@ def add_message(
     context_ids: list = [], 
     document_ids: list = [],
     citations: list = [],
-    mode: str = "RAG",     # <--- ADD THIS
-    artifacts: list = []   # <--- ADD THIS
+    mode: str = "RAG",
+    artifacts: list = [],
+    summary: str = ""
 ):
     msg = ChatMessageModel(
         session_id=session_id,
@@ -75,7 +76,8 @@ def add_message(
         citations=citations,
         document_ids=document_ids, # (Optional: ensure your model has this field if you want to store it)
         mode=mode,             # <--- ADD THIS
-        artifacts=artifacts    # <--- ADD THIS
+        artifacts=artifacts,    # <--- ADD THIS
+        summary=summary         # <--- ADD THIS
     )
     
     result = chat_messages_collection.insert_one(
@@ -98,5 +100,3 @@ def get_session_messages(session_id: str, user_id: str):
         {"session_id": session_id, "user_id": user_id}
     ).sort("created_at", 1)
     return [ChatMessageModel(**m) for m in msgs]
-
-

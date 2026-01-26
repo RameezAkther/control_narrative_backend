@@ -8,15 +8,12 @@ PyObjectId = Annotated[str, BeforeValidator(str)]
 class ChatSessionModel(BaseModel):
     """
     Represents a conversation thread.
-    Points to User and Documents.
     """
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
-    user_id: PyObjectId = Field(...)  # Points to users collection
+    user_id: PyObjectId = Field(...) 
     
     name: str = "New Chat"
     mode: str = "RAG"
-    
-    # List of document IDs (ObjectIds) this chat has access to
     document_ids: List[PyObjectId] = []
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -29,20 +26,26 @@ class ChatSessionModel(BaseModel):
 class ChatMessageModel(BaseModel):
     """
     Represents a single message.
-    Points to ChatSession and User.
     """
     id: Optional[PyObjectId] = Field(alias="_id", default=None)
-    session_id: PyObjectId = Field(...) # Points to chat_sessions collection
-    user_id: PyObjectId = Field(...)    # Points to users collection
+    session_id: PyObjectId = Field(...) 
+    user_id: PyObjectId = Field(...)    
     
     role: str  # "user" or "assistant"
     content: str
     
-    # Context Logic: Which previous messages were active when this was sent?
+    # Context Logic
     active_context_ids: Optional[List[str]] = []
     
-    # RAG Logic: Which chunks/citations were used?
+    # RAG Logic
     citations: Optional[List[dict]] = []
+    
+    # 3. ADD THESE FIELDS to store the selections in DB
+    mode: str = "RAG"
+    artifacts: Optional[List[str]] = []
+    document_ids: Optional[List[str]] = []
+
+    summary: str = ""
     
     created_at: datetime = Field(default_factory=datetime.utcnow)
 

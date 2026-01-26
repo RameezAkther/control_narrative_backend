@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from typing import List, Dict
 from pydantic import BaseModel, Field
 
@@ -22,11 +23,11 @@ class ValidationReport(BaseModel):
     issues: List[ValidationIssue] = Field(default_factory=list, description="List of all identified issues.")
 
 # ==============================================================================
-# 2. The Agent Runner (Batched & Merged)
+# 2. The Agent Runner (Robust Batching Version)
 # ==============================================================================
 
 class ValidatorRunner:
-    def __init__(self, model_name="gemini-2.0-flash-exp"):
+    def __init__(self, model_name="gemini-2.5-flash"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             verbose=True,
@@ -73,64 +74,80 @@ class ValidatorRunner:
 
         agent = Agent(
             role='Control Systems QA Engineer',
-            goal='Validate control logic.',
-            backstory="You are the final gatekeeper.",
+            goal='Validate control logic against best practices.',
+            backstory="You are the final gatekeeper. You check for missing interlocks, undefined tags, and logic gaps.",
             llm=self.llm,
-            verbose=True,
+            verbose=False,
             allow_delegation=False
         )
 
-        tasks = []
+        all_issues = []
+
+        # --- PROCESS BATCHES ---
         for i, batch in enumerate(batches):
+            print(f"   Validating Batch {i+1}/{len(batches)}...")
+            
             batch_str = json.dumps(batch, indent=2)
+            
             task = Task(
-                description=f"Validate Batch {i+1}:\n{batch_str}",
+                description=(
+                    f"Validate this BATCH of control loops:\n{batch_str}\n\n"
+                    "CHECK FOR:\n"
+                    "1. Missing Sensors/Actuators for the described strategy.\n"
+                    "2. Critical loops missing safety interlocks.\n"
+                    "3. Vagueness in descriptions.\n"
+                    "Return a JSON list of issues found."
+                ),
                 expected_output="JSON list of validation issues.",
                 agent=agent,
                 output_json=ValidationReport
             )
-            tasks.append(task)
 
-        aggregator = Agent(
-            role='QA Lead',
-            goal='Compile final report.',
-            backstory="Compile punch-list.",
-            llm=self.llm,
-            verbose=True
-        )
+            # Isolate task
+            crew = Crew(
+                agents=[agent],
+                tasks=[task],
+                process=Process.sequential,
+                verbose=False
+            )
 
-        reduce_task = Task(
-            description="Combine issues into one list.",
-            expected_output="Final ValidationReport.",
-            agent=aggregator,
-            context=tasks,
-            output_json=ValidationReport
-        )
-
-        crew = Crew(
-            agents=[agent, aggregator],
-            tasks=[*tasks, reduce_task],
-            process=Process.sequential,
-            verbose=True
-        )
-
-        result = crew.kickoff()
-        
-        final_report = {}
-        
-        if hasattr(result, 'json_dict') and result.json_dict:
-            final_report = result.json_dict
-        elif hasattr(result, 'raw'):
             try:
-                clean_raw = result.raw.replace('```json', '').replace('```', '').strip()
-                final_report = json.loads(clean_raw)
-            except:
-                print(f"❌ JSON Parse Error on raw output: {result.raw}")
-                final_report = {"issues": []}
-        else:
-            final_report = result if isinstance(result, dict) else {"issues": []}
+                result = crew.kickoff()
+                
+                # Robust extraction
+                batch_report = None
+                if hasattr(result, 'json_dict') and result.json_dict:
+                    batch_report = result.json_dict
+                elif hasattr(result, 'pydantic') and result.pydantic:
+                    batch_report = result.pydantic.dict()
+                elif hasattr(result, 'raw'):
+                    try:
+                        clean = result.raw.replace('```json', '').replace('```', '')
+                        batch_report = json.loads(clean)
+                    except:
+                        pass
 
-        is_valid = len(final_report.get('issues', [])) == 0
-        final_report['is_valid'] = is_valid
+                if batch_report and 'issues' in batch_report:
+                    count = len(batch_report['issues'])
+                    if count > 0:
+                        print(f"   ⚠️ Batch {i+1}: Found {count} issues.")
+                        all_issues.extend(batch_report['issues'])
+                    else:
+                        print(f"   ✅ Batch {i+1}: Clean.")
+                else:
+                    print(f"   ⚠️ Batch {i+1}: No valid output structure.")
+
+            except Exception as e:
+                print(f"   ❌ Error validating Batch {i+1}: {e}")
+
+            # RATE LIMITING
+            time.sleep(2)
+
+        # --- FINAL AGGREGATION ---
+        final_report = {
+            "issues": all_issues,
+            "is_valid": len(all_issues) == 0,
+            "total_checked": len(full_loop_contexts)
+        }
         
         return final_report

@@ -75,12 +75,12 @@ async def send_message(
 ):
     user_id = str(current_user["_id"])
     
-    # 1. Check Session Exists
+    # 1. Check Session
     session = crud.get_chat_session(chat_id, user_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
 
-    # 2. Save USER Message
+    # 2. Save User Message
     crud.add_message(
         session_id=chat_id,
         user_id=user_id,
@@ -88,32 +88,39 @@ async def send_message(
         content=payload.message,
         context_ids=payload.active_context_ids,
         document_ids=payload.document_ids,
-        mode=payload.mode,         # <--- ADDED: Save user's selected mode
-        artifacts=payload.artifacts # <--- ADDED: Save user's selected artifacts
+        mode=payload.mode,
+        artifacts=payload.artifacts
     )
 
-    # 3. GENERATE AI RESPONSE (RAG)
+    # 3. Generate Response
     ai_response_text = ""
     citations_data = []
+    response_summary = ""  # Initialize
 
     try:
+        # --- FIX: UNPACK 3 VALUES HERE ---
         response_tuple = await rag_engine.generate_response(
             query=payload.message,
             document_ids=payload.document_ids,
-            active_context_ids=payload.active_context_ids
+            active_context_ids=payload.active_context_ids,
+            artifacts=payload.artifacts,
+            mode=payload.mode
         )
         
+        # Handle tuple unpacking safely
         if isinstance(response_tuple, tuple):
-            ai_response_text, citations_data = response_tuple
+            if len(response_tuple) == 3:
+                ai_response_text, citations_data, response_summary = response_tuple
+            elif len(response_tuple) == 2:
+                ai_response_text, citations_data = response_tuple
         else:
             ai_response_text = response_tuple
             
     except Exception as e:
         print(f"RAG Error: {e}")
         ai_response_text = "I encountered an error analyzing your documents."
-        citations_data = []
 
-    # 4. Save ASSISTANT Message
+    # 4. Save Assistant Message with Summary
     ai_message = crud.add_message(
         session_id=chat_id,
         user_id=user_id,
@@ -121,8 +128,9 @@ async def send_message(
         content=ai_response_text,
         document_ids=payload.document_ids,
         citations=citations_data,
-        mode=payload.mode,          # <--- ADDED: Save the mode used for generation
-        artifacts=payload.artifacts # <--- ADDED: Save the artifacts used
+        mode=payload.mode,
+        artifacts=payload.artifacts,
+        summary=response_summary # <--- PASS THE SUMMARY TO DB
     )
 
     return ai_message

@@ -12,19 +12,24 @@ class ChatMode(str):
 class MessageCreate(BaseModel):
     message: str
     mode: str = "RAG"
-    # The IDs of docs selected for THIS specific message
     document_ids: List[str] = []
-    # The IDs of previous messages to use as context
     active_context_ids: List[str] = []
+    
+    # 1. ADD THIS FIELD (This was likely causing the 422 error)
+    artifacts: List[str] = [] 
 
 class MessageResponse(BaseModel):
     id: str = Field(alias="_id")
     role: str
     content: str
-    # Add this field to return stored context
-    citations: Optional[List[dict]] = [] 
+    citations: Optional[List[dict]] = []
     created_at: datetime
     
+    # 2. Add these to return metadata to the UI
+    mode: str = "RAG"
+    artifacts: List[str] = []
+    document_ids: List[str] = [] 
+
     class Config:
         populate_by_name = True
         from_attributes = True
@@ -48,4 +53,3 @@ class ChatSessionResponse(BaseModel):
     class Config:
         populate_by_name = True
         from_attributes = True
-

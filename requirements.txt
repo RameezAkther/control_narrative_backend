@@ -22,3 +22,6 @@ langchain-google-genai
 ollama
 langchain-chroma
 langchain-huggingface
+langchain-text-splitters
+langchain-community
+langchain-core

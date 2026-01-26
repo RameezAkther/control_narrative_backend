@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 from typing import List, Dict, Any
 from crewai import Agent, Task, Crew, Process
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -10,7 +11,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 # ==============================================================================
 
 class CodeGeneratorRunner:
-    def __init__(self, model_name="gemini-2.0-flash-exp"):
+    def __init__(self, model_name="gemini-2.5-flash"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             verbose=True,
@@ -35,20 +36,15 @@ class CodeGeneratorRunner:
             validation_report: The dictionary output from ValidatorRunner.
         """
         
-        # 1. Extract Valid Loops Only
-        # We shouldn't generate code for broken loops.
-        # This is a basic filter; in production you might want to be more specific.
+        # 1. Extract Valid Loops
         raw_loops = logic_data.get('loops', [])
         if not raw_loops:
-            # Fallback if logic_data structure is different (e.g. if passed merged data)
+            # Fallback
             raw_loops = logic_data if isinstance(logic_data, list) else []
 
         print(f"🏭 Code Gen: Preparing to write code for {len(raw_loops)} loops...")
 
         # 2. Define Agents
-        
-        # Agent A: The Architect (Defines Variables)
-        # This prevents "Variable not defined" errors by doing it all upfront.
         architect = Agent(
             role='PLC Architect',
             goal='Define all VAR_INPUT, VAR_OUTPUT, and internal VARs.',
@@ -58,28 +54,26 @@ class CodeGeneratorRunner:
             allow_delegation=False
         )
 
-        # Agent B: The Developer (Writes Logic)
         developer = Agent(
             role='Senior PLC Developer',
             goal='Write efficient Structured Text (ST) logic for specific loops.',
-            backstory="You write clean IF/THEN/ELSE and PID function blocks. You use the exact tag names provided.",
+            backstory="You write clean IF/THEN/ELSE and PID function blocks.",
             llm=self.llm,
-            verbose=True,
+            verbose=False, # Reduce noise for batching
             allow_delegation=False
         )
 
-        # 3. Create Tasks
-        tasks = []
-
-        # --- TASK 1: Variable Declaration (The "Header") ---
-        # We send ALL loops to the architect so they can declare everything global/local.
-        # If the list is huge, this might need chunking too, but variable lists are usually denser/smaller than logic.
+        # --- PHASE 1: HEADER GENERATION ---
+        print("\n📝 Generating PLC Header (Variables)...")
+        
+        # We send a truncated list if huge to avoid context limits for the header prompt
+        # Ideally, you'd want to extract just the tags first, but for now we send the structure
         header_task = Task(
             description=(
-                f"Analyze these Control Loops:\n{json.dumps(raw_loops[:30], indent=2)} "
-                f"\n(Truncated list for brevity if huge)...\n\n"
+                f"Analyze these Control Loops:\n{json.dumps(raw_loops[:50], indent=2)} "
+                f"\n(List truncated if > 50)...\n\n"
                 "TASK:\n"
-                "1. Extract ALL unique Tag Names (inputs and outputs).\n"
+                "1. Extract ALL unique Tag Names (inputs and outputs) from the provided JSON.\n"
                 "2. Generate the 'VAR', 'VAR_INPUT', and 'VAR_OUTPUT' blocks.\n"
                 "3. Assume standard data types (BOOL for switches, REAL for transmitters).\n"
                 "4. Return ONLY the variable declaration text."
@@ -87,16 +81,32 @@ class CodeGeneratorRunner:
             expected_output="IEC 61131-3 Variable Declaration Block.",
             agent=architect
         )
-        tasks.append(header_task)
 
-        # --- TASK 2..N: Logic Generation (The "Body") ---
-        # We batch the logic writing to ensure high quality code for every loop.
+        header_crew = Crew(
+            agents=[architect],
+            tasks=[header_task],
+            verbose=True
+        )
+        
+        header_result = header_crew.kickoff()
+        
+        final_code_parts = []
+        if hasattr(header_result, 'raw'):
+            final_code_parts.append(self.clean_code_output(header_result.raw))
+        else:
+            final_code_parts.append(self.clean_code_output(str(header_result)))
+
+        # --- PHASE 2: LOGIC GENERATION (Batched) ---
+        print("\n⚙️ Generating Logic Blocks...")
+        
         batches = self._batch_loops(raw_loops, batch_size=5)
         
         for i, batch in enumerate(batches):
+            print(f"   Writing Logic for Batch {i+1}/{len(batches)}...")
+            
             task = Task(
                 description=(
-                    f"Write Structured Text (ST) logic for this BATCH of loops (Batch {i+1}/{len(batches)}):\n\n"
+                    f"Write Structured Text (ST) logic for this BATCH of loops:\n\n"
                     f"{json.dumps(batch, indent=2)}\n\n"
                     "RULES:\n"
                     "1. Use standard IEC 61131-3 syntax.\n"
@@ -106,52 +116,38 @@ class CodeGeneratorRunner:
                 expected_output="Structured Text Logic Snippet.",
                 agent=developer
             )
-            tasks.append(task)
 
-        # 4. Execute
-        crew = Crew(
-            agents=[architect, developer],
-            tasks=tasks,
-            process=Process.sequential,
-            verbose=True
-        )
+            # Isolate Task
+            crew = Crew(
+                agents=[developer],
+                tasks=[task],
+                verbose=False
+            )
 
-        result = crew.kickoff()
+            try:
+                result = crew.kickoff()
+                output_text = ""
+                if hasattr(result, 'raw'):
+                    output_text = result.raw
+                else:
+                    output_text = str(result)
+                
+                cleaned = self.clean_code_output(output_text)
+                final_code_parts.append(f"\n(* --- Batch {i+1} Logic --- *)\n{cleaned}")
+                print(f"   ✅ Batch {i+1} written.")
 
-        # 5. Assemble The Final File
-        # CrewAI returns the final task's output by default, but we need ALL outputs.
-        # We can access them via the task objects if we kept references, or we can use a custom approach.
-        # For simplicity in this script, we will assume we need to concatenate manually or rely on a final "Merger" agent.
+            except Exception as e:
+                print(f"   ❌ Error writing Batch {i+1}: {e}")
+                final_code_parts.append(f"\n(* Error generating Batch {i+1} *)")
+
+            # Rate Limiting
+            time.sleep(2)
+
+        # --- FINAL ASSEMBLY ---
+        full_program = "\n\n".join(final_code_parts)
         
-        # Let's add a final "Merger" agent to be safe and let the AI handle the stitching.
-        merger = Agent(
-            role='Code Integrator',
-            goal='Combine variable declarations and logic chunks into one file.',
-            backstory="You take the headers and the body code and paste them into a final PROGRAM block.",
-            llm=self.llm,
-            verbose=True
-        )
+        # Wrap in PROGRAM block if missing
+        if "PROGRAM" not in full_program:
+            full_program = f"PROGRAM MainControl\n{full_program}\nEND_PROGRAM"
 
-        merge_task = Task(
-            description="Combine the Variable Declarations and all Logic Snippets from previous tasks into one final valid ST PROGRAM.",
-            expected_output="Final Complete PLC Program Code.",
-            agent=merger,
-            context=tasks # Gives access to all previous outputs
-        )
-
-        final_crew = Crew(
-            agents=[architect, developer, merger],
-            tasks=[*tasks, merge_task],
-            process=Process.sequential,
-            verbose=True
-        )
-
-        final_result = final_crew.kickoff()
-
-        raw_text = ""
-        if hasattr(final_result, 'raw'):
-            raw_text = final_result.raw
-        else:
-            raw_text = str(final_result)
-            
-        return self.clean_code_output(raw_text)
+        return full_program

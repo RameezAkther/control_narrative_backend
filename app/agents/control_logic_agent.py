@@ -1,5 +1,7 @@
 import os
 import json
+import re
+import time
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
 
@@ -32,7 +34,7 @@ class LogicExtractionResult(BaseModel):
     loops: List[ControlLoop] = Field(default_factory=list, description="A list of all identified control loops.")
 
 # ==============================================================================
-# 2. The Agent Runner (Map-Reduce Version)
+# 2. The Agent Runner (Fault-Tolerant Batching)
 # ==============================================================================
 
 class LogicAgentRunner:
@@ -44,77 +46,74 @@ class LogicAgentRunner:
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
 
-    def _create_chunks(self, sections: List[Dict], max_chunk_size=30000) -> List[str]:
-        """
-        Groups sections into larger chunks to avoid creating too many small tasks.
-        """
+    def _create_chunks(self, sections: List[Dict], max_chunk_size=15000) -> List[str]:
         chunks = []
         current_chunk = ""
-        
         for sec in sections:
             sec_text = f"\n--- SECTION: {sec.get('title', 'Unknown')} ---\n"
             sec_text += sec.get('content', '') + "\n"
-            
             if len(current_chunk) + len(sec_text) > max_chunk_size:
-                if current_chunk:
-                    chunks.append(current_chunk)
+                if current_chunk: chunks.append(current_chunk)
                 current_chunk = sec_text
             else:
                 current_chunk += sec_text
-        
-        if current_chunk:
-            chunks.append(current_chunk)
-            
+        if current_chunk: chunks.append(current_chunk)
         return chunks
 
+    def _clean_json_string(self, raw_text: str) -> str:
+        """Helper to extract valid JSON from LLM chatter."""
+        try:
+            # 1. Try finding content inside ```json ... ```
+            match = re.search(r"```json\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
+            if match: return match.group(1)
+            
+            # 2. Try finding content inside ``` ... ```
+            match = re.search(r"```\s*(\{.*?\})\s*```", raw_text, re.DOTALL)
+            if match: return match.group(1)
+
+            # 3. Try finding first { and last }
+            start = raw_text.find('{')
+            end = raw_text.rfind('}')
+            if start != -1 and end != -1:
+                return raw_text[start:end+1]
+                
+            return raw_text
+        except:
+            return raw_text
+
     def run(self, sections: List[Dict], summary_context: Dict = None):
-        
-        # 1. Chunk the document
         doc_chunks = self._create_chunks(sections)
         print(f"📄 Logic Extraction: Document split into {len(doc_chunks)} chunks.")
 
-        # 2. Prepare Summary Context (Stringified once to pass to all agents)
         summary_str = ""
         if summary_context:
             summary_str = f"SYSTEM OVERVIEW CONTEXT:\n{json.dumps(summary_context, indent=2)}\n"
 
-        # --- AGENTS ---
-
-        # The Mapper: Focuses on finding loops in a small text window
         logic_analyst = Agent(
             role='Control Logic Analyst',
             goal='Extract exact Control Loops, I/O tags, and Logic from a text fragment.',
-            backstory=(
-                "You are a detail-oriented engineer reading a single page of a specification. "
-                "You identify every control loop mentioned on that page. "
-                "You do not guess about what is happening on other pages."
-            ),
+            backstory="You are a detail-oriented engineer. You identify every control loop mentioned on the page.",
             llm=self.llm,
             allow_delegation=False,
-            verbose=True
+            verbose=False
         )
 
-        # The Reducer: Merges lists and handles duplicates
         lead_automation_eng = Agent(
             role='Lead Automation Engineer',
             goal='Merge multiple lists of control loops into one robust Master List.',
-            backstory=(
-                "You receive partial lists of control loops from your team. "
-                "Your job is to de-duplicate them. "
-                "If 'Tank Level' is mentioned in Chunk 1 and Chunk 2, merge them into a single loop entry. "
-                "Ensure tag names are consistent."
-            ),
+            backstory="You receive partial lists from your team and de-duplicate them.",
             llm=self.llm,
             allow_delegation=False,
             verbose=True
         )
 
-        # --- TASKS ---
-
-        map_tasks = []
-
-        # MAP PHASE: Create a task for each chunk
+        # --- PHASE 1: MAP (Resilient Processing) ---
+        all_partial_results = []
+        print("\n🔄 Starting Batch Extraction (Map Phase)...")
+        
         for i, chunk_text in enumerate(doc_chunks):
+            print(f"   Processing Chunk {i+1}/{len(doc_chunks)}...")
+            
             task = Task(
                 description=(
                     f"Analyze this PARTIAL text (Chunk {i+1}/{len(doc_chunks)}) to find Control Logic.\n\n"
@@ -125,38 +124,84 @@ class LogicAgentRunner:
                     "1. Identify Control Loops visible in THIS text only.\n"
                     "2. Extract Sensors (Inputs) and Actuators (Outputs).\n"
                     "3. Extract Interlock/Logic conditions.\n"
-                    "4. If a loop seems incomplete, extract what is visible (e.g., just the sensors).\n"
+                    "4. Return a JSON object with a 'loops' key containing the list."
                 ),
-                expected_output="A partial list of Control Loops found in this chunk.",
-                agent=logic_analyst,
-                output_json=LogicExtractionResult # Returns a partial list of loops
+                expected_output="A valid JSON object containing extracted control loops.",
+                agent=logic_analyst
+                # REMOVED output_json to prevent auto-crash
             )
-            map_tasks.append(task)
 
-        # REDUCE PHASE: Merge everything
+            crew = Crew(agents=[logic_analyst], tasks=[task], verbose=False)
+
+            try:
+                result = crew.kickoff()
+                
+                # Manual Extraction logic to handle bad JSON gracefully
+                raw_output = str(result)
+                if hasattr(result, 'raw'): raw_output = result.raw
+                
+                clean_str = self._clean_json_string(raw_output)
+                
+                # Parse
+                data = json.loads(clean_str)
+                
+                # Validate using Pydantic manually
+                validated = LogicExtractionResult(**data)
+                
+                if validated.loops:
+                    print(f"   ✅ Chunk {i+1}: Found {len(validated.loops)} loops.")
+                    all_partial_results.extend(validated.loops)
+                else:
+                    print(f"   ⚠️ Chunk {i+1}: No loops found (Empty).")
+
+            except json.JSONDecodeError:
+                print(f"   ❌ Chunk {i+1} Failed: Invalid JSON output from LLM. Skipping chunk.")
+            except Exception as e:
+                print(f"   ❌ Chunk {i+1} Failed: {str(e)[:100]}... Skipping chunk.")
+
+            time.sleep(2) 
+
+        # --- PHASE 2: REDUCE ---
+        print(f"\n🧩 Starting Aggregation (Reduce Phase) with {len(all_partial_results)} raw loops...")
+
+        if not all_partial_results:
+            return {"loops": []}
+
+        # Convert Pydantic models to dicts for JSON serialization
+        loops_data = [l.model_dump() for l in all_partial_results]
+        
+        # Batch the reducer if too many loops (avoid context limit)
+        # For simplicity, we assume < 500 loops fits in Gemini's massive window.
+        loops_context = json.dumps(loops_data, indent=2)
+
         reduce_task = Task(
             description=(
-                "You have received multiple partial lists of Control Loops. "
-                "Merge them into one final consolidated list.\n\n"
-                "RULES FOR MERGING:\n"
-                "1. **Deduplicate Loops**: If 'Heater Control' appears in multiple chunks, create ONE loop entry and combine their sensors/interlocks.\n"
-                "2. **Deduplicate Tags**: Ensure the same tag (e.g., TIT-101) is not listed twice in the same loop.\n"
-                "3. **Consolidate Logic**: Combine interlock conditions found in different sections for the same equipment.\n"
-                "4. **Final Check**: Ensure the output matches the required JSON structure exactly."
+                "Merge and Deduplicate these Control Loops.\n\n"
+                f"RAW DATA:\n{loops_context}\n\n"
+                "RULES:\n"
+                "1. Merge duplicate loops (e.g. 'Heater 1' vs 'Heater 1 Control').\n"
+                "2. Remove duplicate tags in inputs/outputs.\n"
+                "3. Return the final list as JSON."
             ),
-            expected_output="The final merged LogicExtractionResult containing all Control Loops.",
+            expected_output="The final merged LogicExtractionResult JSON.",
             agent=lead_automation_eng,
-            context=map_tasks, # Passes all partial outputs to this task
-            output_json=LogicExtractionResult
+            output_json=LogicExtractionResult # We can keep strict mode here as input is cleaner
         )
 
-        # --- CREW EXECUTION ---
-
-        crew = Crew(
-            agents=[logic_analyst, lead_automation_eng],
-            tasks=[*map_tasks, reduce_task],
-            process=Process.sequential,
+        final_crew = Crew(
+            agents=[lead_automation_eng],
+            tasks=[reduce_task],
             verbose=True
         )
 
-        return crew.kickoff()
+        try:
+            final_result = final_crew.kickoff()
+            if hasattr(final_result, 'json_dict') and final_result.json_dict:
+                return final_result.json_dict
+            elif hasattr(final_result, 'pydantic') and final_result.pydantic:
+                return final_result.pydantic.model_dump()
+        except Exception as e:
+            print(f"❌ Reducer Failed: {e}. Returning raw aggregated list.")
+            return {"loops": loops_data}
+            
+        return {"loops": []}
