@@ -178,26 +178,40 @@ def get_document_status(
         "validator_agent_pending",
         "validator_agent_completed",
         "code_generator_completed",
-        "ready / completed"
+        "mindmap_generator_agent_pending",
+        "completed" # Final step
     ]
 
     # Get the status key (step) and the specific message
     # We prioritize the specific message saved in 'progress.message'
-    status_key = parsed.get("status", "queued")
+    
+    # FIX: Use the granular 'step' from progress to determine the stage, 
+    # as 'status' field is often too high-level (e.g. "understanding the document")
     progress_data = parsed.get("progress", {})
+    status_key = progress_data.get("step", "queued")
+    
+    # Should use the human readable status for the returned "status" field or logic?
+    # The frontend uses this key for display text sometimes, but mostly uses stage/message.
+    # The frontend expects "status" to be valid-ish. 
+    # Let's return the high-level status as "status" but use "step" for stage calc.
+    high_level_status = parsed.get("status", "queued")
     
     # Calculate Stage Index
     try:
         # +1 because we want 1-based indexing for the UI
         stage = STATUS_ORDER.index(status_key) + 1
     except ValueError:
-        # If status isn't in the list (e.g. error), default to 0 or max
-        stage = 0 if "fail" not in status_key.lower() else len(STATUS_ORDER)
+        # If status isn't in the list (e.g. error or unknown step), default to 0 or max
+        # Check if actual status is failed
+        if "fail" in high_level_status.lower() or "fail" in status_key.lower():
+             stage = len(STATUS_ORDER) # Or handle as error state
+        else:
+             stage = 0 
 
-    print(f"Document {document_id} status: {status_key} (Stage {stage}/{len(STATUS_ORDER)})")
+    print(f"Document {document_id} step: {status_key} -> Stage {stage}/{len(STATUS_ORDER)}")
 
     return {
-        "status": status_key,
+        "status": high_level_status, # Keep returning the high-level status string
         "stage": stage,
         "total_stages": len(STATUS_ORDER), # Send total to frontend for accurate math
         "progress": progress_data, # Contains the specific 'message' from update_progress
@@ -247,7 +261,14 @@ def get_document_artifact(
         "loop_map": os.path.join("agent_generated_files", "3_loop_map.json"),
         "validation": os.path.join("agent_generated_files", "4_validation.json"),
         "plc_code": os.path.join("agent_generated_files", "5_plc_code.st"),
+        "mindmaps_index": os.path.join("agent_generated_files", "6_mindmaps_index.json"),
     }
+    
+    # Dynamic handling for individual mindmap files (e.g., "mindmap_Loop-101")
+    if file_key.startswith("mindmap_") and file_key != "mindmaps_index":
+        # Extract loop name from key (e.g., mindmap_P-101 -> P-101)
+        loop_name_requested = file_key.replace("mindmap_", "")
+        FILE_MAPPING[file_key] = os.path.join("agent_generated_files", "mindmaps", f"{loop_name_requested}.json")
 
     print(f"Requested artifact key: {file_key}")
 
@@ -265,7 +286,7 @@ def get_document_artifact(
     # 4. Read and Return Content
     try:
         # Determine if we should return JSON object or Plain Text
-        is_json = file_key in ["summary", "logic_extracted", "loop_map", "validation"]
+        is_json = file_key in ["summary", "logic_extracted", "loop_map", "validation", "mindmaps_index"] or file_key.startswith("mindmap_")
         
         with open(full_path, "r", encoding="utf-8") as f:
             if is_json:
