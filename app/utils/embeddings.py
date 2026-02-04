@@ -99,30 +99,30 @@ def embed_and_persist_document(
 
     # 4) Persist to ChromaDB (Modern API)
     collection_name = f"doc_{document_id}"
-    # try:
-    #     # UPDATED: Use PersistentClient directly. 
-    #     # This automatically handles saving to disk (SQLite).
-    #     client = chromadb.PersistentClient(path=persist_directory)
-    #     
-    #     collection_name = f"doc_{document_id}"
-    #     
-    #     # Get or create the collection
-    #     collection = client.get_or_create_collection(name=collection_name)
-    #     
-    #     # Add data
-    #     # Note: Chroma expects python lists for embeddings, not numpy arrays
-    #     collection.add(
-    #         ids=ids,
-    #         documents=texts,
-    #         metadatas=metadatas,
-    #         embeddings=embeddings.tolist()
-    #     )
-    #     
-    #     # NOTE: client.persist() is NOT needed in new Chroma versions. 
-    #     # Data is auto-persisted.
-    # 
-    # except Exception as e:
-    #     raise RuntimeError(f"ChromaDB error: {e}") from e
+    try:
+        # UPDATED: Use PersistentClient directly. 
+        # This automatically handles saving to disk (SQLite).
+        client = chromadb.PersistentClient(path=persist_directory)
+        
+        collection_name = f"doc_{document_id}"
+        
+        # Get or create the collection
+        collection = client.get_or_create_collection(name=collection_name)
+        
+        # Add data
+        # Note: Chroma expects python lists for embeddings, not numpy arrays
+        collection.add(
+            ids=ids,
+            documents=texts,
+            metadatas=metadatas,
+            embeddings=embeddings.tolist()
+        )
+        
+        # NOTE: client.persist() is NOT needed in new Chroma versions. 
+        # Data is auto-persisted.
+    
+    except Exception as e:
+        raise RuntimeError(f"ChromaDB error: {e}") from e
 
     return {
         "collection_name": collection_name, 
