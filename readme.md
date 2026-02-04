@@ -22,24 +22,24 @@ The codebase is organized to reflect the "Factory Model" architecture described 
 ├── 📄 main.py                      # Application entry point (FastAPI)
 ├── 📄 config.py                    # Environment configuration
 ├── 📁 app
-[cite_start]│   ├── 📁 agents                   # THE AGENTIC CORE [cite: 34]
-[cite_start]│   │   ├── 📄 pipeline.py          # The Orchestration Layer (Plant Manager) [cite: 396]
-[cite_start]│   │   ├── 📄 document_agent.py    # Ingestion: Manages PDF parsing strategies [cite: 30]
-[cite_start]│   │   ├── 📁 parsers              # Dual-Engine Architecture [cite: 161]
-[cite_start]│   │   │   ├── 📄 deterministic_parser.py # Strategy A: Fast rule-based heuristic [cite: 164]
-[cite_start]│   │   │   └── 📄 docling_parser.py       # Strategy B: AI-powered layout analysis [cite: 173]
-[cite_start]│   │   ├── 📄 image_parser_agent.py  # Vision: Qwen-VL based diagram analysis [cite: 32, 201]
-[cite_start]│   │   ├── 📄 understanding_agent.py # Processing: Map-Reduce system summarization [cite: 35]
-[cite_start]│   │   ├── 📄 control_logic_agent.py # Extraction: Identifies rules and tags [cite: 36]
-[cite_start]│   │   ├── 📄 mapper_agent.py      # Strategy: Loop Mapper / Topology Architect [cite: 37, 297]
-[cite_start]│   │   ├── 📄 validator_agent.py   # QA: Data Fusion & Safety Verification [cite: 38, 327]
-[cite_start]│   │   └── 📄 code_generator_agent.py # Output: IEC 61131-3 ST generation [cite: 39, 368]
+│   ├── 📁 agents                   # THE AGENTIC CORE [cite: 34]
+│   │   ├── 📄 pipeline.py          # The Orchestration Layer (Plant Manager) [cite: 396]
+│   │   ├── 📄 document_agent.py    # Ingestion: Manages PDF parsing strategies [cite: 30]
+│   │   ├── 📁 parsers              # Dual-Engine Architecture [cite: 161]
+│   │   │   ├── 📄 deterministic_parser.py # Strategy A: Fast rule-based heuristic [cite: 164]
+│   │   │   └── 📄 docling_parser.py       # Strategy B: AI-powered layout analysis [cite: 173]
+│   │   ├── 📄 image_parser_agent.py  # Vision: Qwen-VL based diagram analysis [cite: 32, 201]
+│   │   ├── 📄 understanding_agent.py # Processing: Map-Reduce system summarization [cite: 35]
+│   │   ├── 📄 control_logic_agent.py # Extraction: Identifies rules and tags [cite: 36]
+│   │   ├── 📄 mapper_agent.py      # Strategy: Loop Mapper / Topology Architect [cite: 37, 297]
+│   │   ├── 📄 validator_agent.py   # QA: Data Fusion & Safety Verification [cite: 38, 327]
+│   │   └── 📄 code_generator_agent.py # Output: IEC 61131-3 ST generation [cite: 39, 368]
 │   ├── 📁 chat                     # INTERACTIVE SUPPORT
-[cite_start]│   │   ├── 📄 rag_engine.py        # Implements RAG, ReACT, and FLARE strategies [cite: 47]
+│   │   ├── 📄 rag_engine.py        # Implements RAG, ReACT, and FLARE strategies [cite: 47]
 │   │   └── 📄 routes.py            # Chat API endpoints
 │   ├── 📁 documents                # FILE MANAGEMENT
 │   │   ├── 📄 parsed_crud.py       # Handling intermediate JSON/Markdown outputs
-[cite_start]│   │   └── 📁 user_documents       # Local storage for raw uploads [cite: 43]
+│   │   └── 📁 user_documents       # Local storage for raw uploads [cite: 43]
 │   ├── 📁 auth                     # SECURITY
 │   │   ├── 📄 jwt_handler.py       # Token management
 │   │   └── 📄 routes.py            # Login/Register endpoints
