@@ -19,6 +19,7 @@ def create_parsed_document(document_id, user_id, parsing_strategy: str = "fast",
         "mapper_agent_output_file_path": None,
         "validator_agent_output_file_path": None,
         "code_generator_agent_output_file_path": None,
+        "mindmap_generator_output_file_path": None,
 
         # Save requested parsing strategy for transparency
         "parsing_strategy": parsing_strategy,
@@ -90,6 +91,7 @@ def update_progress(document_id, step, message):
         "control_logic_pending": "extracting control logic",
         "validator_agent_pending": "validating the control logic",
         "code_generator_pending": "generating code",
+        "mindmap_generator_agent_pending": "generating mindmaps",
         "loop_mapper_pending": "mapping loops",
         "completed": "ready / completed",
         "uploading": "uploading the document",

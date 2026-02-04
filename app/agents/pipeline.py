@@ -124,7 +124,7 @@ def run_agent_pipeline(md_file_path: str, document_id: str = None):
     )
 
     # --- 6. Code Generator Agent ---
-    print("\n💻 STEP 5/5: Running Code Generator Agent...")
+    print("\n💻 STEP 5/6: Running Code Generator Agent...")
     codegen_runner = CodeGeneratorRunner()
     
     code_result = codegen_runner.run(logic_json, validation_json)
@@ -134,8 +134,48 @@ def run_agent_pipeline(md_file_path: str, document_id: str = None):
     update_parsed_document(document_id, "code_generator_agent_output_file_path", os.path.join(output_dir, "5_plc_code.st"))
     update_progress(
         document_id,
-        step="code_generator_completed",
+        step="code_generator_completed", # This ensures UI updates for code gen
         message="Code generation completed"
+    )
+
+    update_progress(
+        document_id,
+        step="mindmap_generator_agent_pending",
+        message="Starting mindmap generation"
+    )
+
+    # --- 7. Mindmap Generator Agent ---
+    print("\n🧠 STEP 6/6: Running Mindmap Generator Agent...")
+    from app.agents.mindmap_agent import MindmapGeneratorRunner # Import here to avoid circular dependencies if any
+    mindmap_runner = MindmapGeneratorRunner()
+    
+    # Run the agent (returns a dict: { "loop_name": {nodes:..., edges:...} })
+    mindmap_results = mindmap_runner.run(logic_json)
+    
+    # Create mindmaps subdirectory
+    # Create mindmaps subdirectory
+    mindmaps_dir = output_dir / "mindmaps"
+    os.makedirs(mindmaps_dir, exist_ok=True)
+    
+    # Save each loop's mindmap
+    saved_files = []
+    for loop_name, mm_data in mindmap_results.items():
+        # Sanitize filename
+        safe_name = "".join([c for c in loop_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+        filename = f"{safe_name}.json"
+        
+        save_json(mm_data, mindmaps_dir, filename)
+        saved_files.append({"name": loop_name, "file": filename})
+
+    # Save an index file for easy frontend lookup
+    save_json({"mappings": saved_files}, output_dir, "6_mindmaps_index.json")
+
+    update_parsed_document(document_id, "mindmap_generator_output_file_path", os.path.join(output_dir, "6_mindmaps_index.json"))
+    
+    update_progress(
+        document_id,
+        step="completed",
+        message="Pipeline completed successfully"
     )
 
     print("\n✨ PIPELINE COMPLETE ✨")
