@@ -48,20 +48,20 @@ class LoopMapperRunner:
             try:
                 logic_data = json.loads(logic_data)
             except json.JSONDecodeError:
-                print("❌ Mapper Error: Input string is not valid JSON.")
+                print("Mapper Error: Input string is not valid JSON.")
                 return {"mappings": []}
 
         all_loops = logic_data.get("loops", [])
         
         if not all_loops:
-            print("⚠️ Mapper: No loops provided to map.")
+            print("Mapper: No loops provided to map.")
             return {"mappings": []}
 
-        print(f"🔄 Mapper: Received {len(all_loops)} loops. Processing in SINGLE-SHOT mode...")
+        print(f"Mapper: Received {len(all_loops)} loops. Processing in SINGLE-SHOT mode...")
 
         # 2. Check Size Strategy
         if len(all_loops) > self.MAX_LOOPS_SINGLE_SHOT:
-            print(f"⚠️ Too many loops ({len(all_loops)}). Truncating to {self.MAX_LOOPS_SINGLE_SHOT} for safety.")
+            print(f"Too many loops ({len(all_loops)}). Truncating to {self.MAX_LOOPS_SINGLE_SHOT} for safety.")
             all_loops = all_loops[:self.MAX_LOOPS_SINGLE_SHOT]
 
         # 3. Define Agent
@@ -108,11 +108,11 @@ class LoopMapperRunner:
         )
 
         try:
-            print("🚀 Sending all loops to Gemini...")
+            print("Sending all loops to Gemini...")
             start_time = time.time()
             result = crew.kickoff()
             elapsed = time.time() - start_time
-            print(f"✅ Mapping complete in {elapsed:.2f} seconds.")
+            print(f"Mapping complete in {elapsed:.2f} seconds.")
 
             # Robust Extraction
             if hasattr(result, 'json_dict') and result.json_dict:
@@ -124,12 +124,12 @@ class LoopMapperRunner:
                     clean = result.raw.replace('```json', '').replace('```', '').strip()
                     return json.loads(clean)
                 except:
-                    print("❌ JSON Parse failed on raw output.")
+                    print("JSON Parse failed on raw output.")
                     
             return {"mappings": []}
 
         except Exception as e:
-            print(f"❌ Mapper Failed: {e}")
+            print(f"Mapper Failed: {e}")
             return {"mappings": []}
 
 # ==============================================================================

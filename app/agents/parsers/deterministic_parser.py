@@ -1,4 +1,4 @@
-import fitz  # PyMuPDF
+import fitz
 import pdfplumber
 import os
 import re
@@ -128,9 +128,6 @@ class DeterministicPDFParser:
         significant_drawings = 0
 
         for d in drawings:
-            # --- FIX: Safe rect extraction ---
-            # d["rect"] is usually a tuple/list, but if it is already a Rect or something else,
-            # fitz.Rect() constructor handles it.
             try:
                 if "rect" in d:
                     r = fitz.Rect(d["rect"])

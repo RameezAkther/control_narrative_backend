@@ -2,7 +2,7 @@ import time
 import jwt
 from config import JWT_SECRET, JWT_ALGORITHM
 
-def create_access_token(data: dict, expires_in: int = 3600):
+def create_access_token(data: dict, expires_in: int = 36000):
     payload = data.copy()
     payload["exp"] = time.time() + expires_in
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)

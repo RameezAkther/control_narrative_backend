@@ -15,7 +15,7 @@ class CodeGeneratorRunner:
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             verbose=True,
-            temperature=0.1, # Low temp for syntax accuracy
+            temperature=0.1,
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
         self.MAX_LOOPS_SINGLE_SHOT = 2000
@@ -60,11 +60,11 @@ class CodeGeneratorRunner:
         # If the validation report contains the full context, use that instead
         # (This depends on how you pass data between agents. We assume raw_loops is the source of truth).
         
-        print(f"🏭 Code Gen: Generating Full PLC Program for {len(raw_loops)} loops...")
+        print(f"Code Gen: Generating Full PLC Program for {len(raw_loops)} loops...")
 
         # 3. Check Size
         if len(raw_loops) > self.MAX_LOOPS_SINGLE_SHOT:
-            print(f"⚠️ Truncating to {self.MAX_LOOPS_SINGLE_SHOT} loops.")
+            print(f"Truncating to {self.MAX_LOOPS_SINGLE_SHOT} loops.")
             raw_loops = raw_loops[:self.MAX_LOOPS_SINGLE_SHOT]
 
         # 4. Define Agents
@@ -114,11 +114,11 @@ class CodeGeneratorRunner:
         )
 
         try:
-            print("🚀 Generating Code...")
+            print("Generating Code...")
             start_time = time.time()
             result = crew.kickoff()
             elapsed = time.time() - start_time
-            print(f"✅ Code generation complete in {elapsed:.2f} seconds.")
+            print(f"Code generation complete in {elapsed:.2f} seconds.")
 
             # Robust Extraction
             raw_output = ""
@@ -131,7 +131,7 @@ class CodeGeneratorRunner:
             return cleaned_code
 
         except Exception as e:
-            print(f"❌ Code Gen Failed: {e}")
+            print(f"Code Gen Failed: {e}")
             return f"(* Error generating code: {e} *)"
 
 # ==============================================================================

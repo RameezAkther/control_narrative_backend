@@ -4,7 +4,6 @@ import time
 from typing import List, Dict, Any, Union
 from pydantic import BaseModel, Field
 
-# CrewAI imports
 from crewai import Agent, Task, Crew
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -78,18 +77,18 @@ class ValidatorRunner:
         m_mappings = mapping_data.get('mappings', [])
 
         if not l_loops:
-            print("⚠️ Validator: No loops to validate.")
+            print("Validator: No loops to validate.")
             return {"is_valid": True, "issues": [], "summary": "No data provided."}
 
         # 2. Merge Data for Full Context
         full_system_context = self._merge_data(l_loops, m_mappings)
         loop_count = len(full_system_context)
         
-        print(f"🕵️ Validator: Analyzing {loop_count} loops in SINGLE-SHOT mode...")
+        print(f"Validator: Analyzing {loop_count} loops in SINGLE-SHOT mode...")
 
         # 3. Check Size Strategy
         if loop_count > self.MAX_LOOPS_SINGLE_SHOT:
-            print(f"⚠️ Truncating {loop_count} loops to {self.MAX_LOOPS_SINGLE_SHOT} for safety.")
+            print(f"Truncating {loop_count} loops to {self.MAX_LOOPS_SINGLE_SHOT} for safety.")
             full_system_context = full_system_context[:self.MAX_LOOPS_SINGLE_SHOT]
 
         # 4. Define Agent
@@ -136,11 +135,11 @@ class ValidatorRunner:
         )
 
         try:
-            print("🚀 Sending system audit request...")
+            print("Sending system audit request...")
             start_time = time.time()
             result = crew.kickoff()
             elapsed = time.time() - start_time
-            print(f"✅ Validation complete in {elapsed:.2f} seconds.")
+            print(f"Validation complete in {elapsed:.2f} seconds.")
 
             # Robust Extraction
             report_data = {"issues": []}
@@ -156,7 +155,7 @@ class ValidatorRunner:
                     pass
 
             issues = report_data.get("issues", [])
-            print(f"🔍 Found {len(issues)} issues.")
+            print(f"Found {len(issues)} issues.")
             
             return {
                 "is_valid": len(issues) == 0,
@@ -165,7 +164,7 @@ class ValidatorRunner:
             }
 
         except Exception as e:
-            print(f"❌ Validation Failed: {e}")
+            print(f"Validation Failed: {e}")
             return {"is_valid": False, "issues": [{"severity": "Error", "loop_name": "System", "message": str(e), "suggestion": "Check logs."}]}
 
 # ==============================================================================

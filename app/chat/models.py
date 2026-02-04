@@ -39,8 +39,6 @@ class ChatMessageModel(BaseModel):
     
     # RAG Logic
     citations: Optional[List[dict]] = []
-    
-    # 3. ADD THESE FIELDS to store the selections in DB
     mode: str = "RAG"
     artifacts: Optional[List[str]] = []
     document_ids: Optional[List[str]] = []

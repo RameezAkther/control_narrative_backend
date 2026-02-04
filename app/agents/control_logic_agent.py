@@ -1,10 +1,8 @@
 import os
 import json
-import time
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 
-# CrewAI imports
 from crewai import Agent, Task, Crew
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -72,7 +70,7 @@ class LogicAgentRunner:
         full_text = self._construct_full_context(sections)
         doc_length = len(full_text)
         
-        print(f"📄 Logic Extraction: Document Loaded. Length: {doc_length:,} chars.")
+        print(f"Logic Extraction: Document Loaded. Length: {doc_length:,} chars.")
 
         # 2. Add Summary Context if available (helps ground the model)
         context_str = ""
@@ -81,10 +79,10 @@ class LogicAgentRunner:
 
         # 3. Strategy Selection
         if doc_length < self.MAX_SINGLE_SHOT_CHARS:
-            print("🟢 Strategy: SINGLE-SHOT (Best Quality)")
+            print("Strategy: SINGLE-SHOT (Best Quality)")
             return self._run_single_shot(full_text, context_str)
         else:
-            print("🔴 Strategy: MAP-REDUCE (Too large, falling back)")
+            print("Strategy: MAP-REDUCE (Too large, falling back)")
             return self._run_map_reduce(full_text, context_str)
 
     # --------------------------------------------------------------------------
@@ -133,7 +131,7 @@ class LogicAgentRunner:
         # Implementation of Map-Reduce for massive files (same logic as before, just larger chunks)
         # Note: In 99% of cases, you won't hit this with Gemini 2.5 Flash.
         chunks = self._split_text(text, self.CHUNK_SIZE_CHARS)
-        print(f"✂️ Split document into {len(chunks)} chunks.")
+        print(f"Split document into {len(chunks)} chunks.")
         
         all_loops = []
         mapper = Agent(
@@ -196,5 +194,5 @@ class LogicAgentRunner:
                 clean = result.raw.replace('```json', '').replace('```', '').strip()
                 return json.loads(clean)
         except Exception as e:
-            print(f"❌ Extraction Error: {e}")
+            print(f"Extraction Error: {e}")
         return {"loops": []}

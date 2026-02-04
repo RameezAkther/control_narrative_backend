@@ -1,10 +1,8 @@
 import os
 import json
-import time
 from typing import List, Dict, Optional, Any
 from pydantic import BaseModel, Field
 
-# CrewAI imports
 from crewai import Agent, Task, Crew
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -58,14 +56,14 @@ class UnderstandingAgentRunner:
         full_text = self._construct_full_context(sections)
         doc_length = len(full_text)
         
-        print(f"📄 Document Loaded. Length: {doc_length:,} chars.")
+        print(f"Document Loaded. Length: {doc_length:,} chars.")
 
         # 2. Decide Strategy
         if doc_length < self.MAX_SINGLE_SHOT_CHARS:
-            print("🟢 Strategy: SINGLE-SHOT (Fits in context)")
+            print("Strategy: SINGLE-SHOT (Fits in context)")
             return self._run_single_shot(full_text)
         else:
-            print("🔴 Strategy: MAP-REDUCE (Too large, chunking required)")
+            print("Strategy: MAP-REDUCE (Too large, chunking required)")
             return self._run_map_reduce(full_text)
 
     # --------------------------------------------------------------------------
@@ -96,7 +94,7 @@ class UnderstandingAgentRunner:
     def _run_map_reduce(self, text: str):
         # 1. SPLIT (Map)
         chunks = self._split_text(text, self.CHUNK_SIZE_CHARS)
-        print(f"✂️ Split document into {len(chunks)} chunks.")
+        print(f"Split document into {len(chunks)} chunks.")
         
         partial_results = []
         
@@ -126,7 +124,7 @@ class UnderstandingAgentRunner:
                 partial_results.append(res)
         
         # 2. MERGE (Reduce)
-        print(f"🧩 Merging {len(partial_results)} partial summaries...")
+        print(f"Merging {len(partial_results)} partial summaries...")
         
         # Dump partials to string for the reducer
         partials_str = json.dumps(partial_results, indent=2)

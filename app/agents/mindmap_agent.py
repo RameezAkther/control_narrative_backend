@@ -5,7 +5,6 @@ import time
 from typing import List, Dict, Any, Union
 from pydantic import BaseModel, Field
 
-# CrewAI imports
 from crewai import Agent, Task, Crew
 from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -80,13 +79,13 @@ class MindmapGeneratorRunner:
             try:
                 logic_data = json.loads(logic_data)
             except json.JSONDecodeError:
-                print("❌ Mindmap Agent Error: Input string is not valid JSON.")
+                print("Mindmap Agent Error: Input string is not valid JSON.")
                 return {}
 
         all_loops = logic_data.get("loops", [])
         
         if not all_loops:
-            print("⚠️ Mindmap Agent: No loops provided.")
+            print("Mindmap Agent: No loops provided.")
             return {}
 
         print(f"🔄 Mindmap Agent: Received {len(all_loops)} loops. Generating mindmaps...")
@@ -95,7 +94,7 @@ class MindmapGeneratorRunner:
         try:
             schema_instructions = self._load_prompt_instructions()
         except Exception as e:
-            print(f"❌ Mindmap Agent Failed to load prompt: {e}")
+            print(f"Mindmap Agent Failed to load prompt: {e}")
             return {}
 
         # 2. Define Agent
@@ -120,7 +119,7 @@ class MindmapGeneratorRunner:
         
         for i, loop in enumerate(all_loops):
             loop_name = loop.get("loop_name", f"Loop_{i}")
-            print(f"   ➤ Generating mindmap for: {loop_name}")
+            print(f"Generating mindmap for: {loop_name}")
             
             loop_context = json.dumps(loop, indent=2)
 
@@ -167,12 +166,12 @@ class MindmapGeneratorRunner:
                     try:
                         mindmap_json = json.loads(clean)
                     except:
-                        print(f"   ❌ Failed to parse JSON for {loop_name}")
+                        print(f"Failed to parse JSON for {loop_name}")
                         continue
                 
                 results[loop_name] = mindmap_json
 
             except Exception as e:
-                print(f"   ❌ Failed loop {loop_name}: {e}")
+                print(f"Failed loop {loop_name}: {e}")
 
         return results

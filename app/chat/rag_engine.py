@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+from bson import ObjectId
 from typing import List, Tuple, Optional, Any
 
 # LangChain & Gemini
@@ -19,7 +20,6 @@ from crewai import Agent, Task, Crew, Process
 
 # Database Imports
 from db.database import parsed_documents_collection, chat_messages_collection
-from bson import ObjectId
 
 # --- CONFIGURATION ---
 EMBEDDING_MODEL_NAME = "all-mpnet-base-v2" 

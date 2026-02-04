@@ -1,13 +1,13 @@
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling_core.types.doc import PictureItem, TableItem
-
 from pathlib import Path
 from PIL import Image
 import imagehash
 import tempfile
 import logging
+
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling_core.types.doc import PictureItem, TableItem
 
 logging.basicConfig(level=logging.INFO)
 

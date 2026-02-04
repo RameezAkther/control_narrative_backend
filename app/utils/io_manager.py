@@ -1,4 +1,3 @@
-# utils.py
 import os
 import ast
 import json
@@ -45,7 +44,6 @@ def extract_json_from_result(crew_result):
     Handles Dicts, CrewOutput objects, JSON strings, and Python Dict strings.
     """
     # 1. If it's already a Dict, return it immediately!
-    # (This prevents the error you are seeing)
     if isinstance(crew_result, dict):
         return crew_result
 
