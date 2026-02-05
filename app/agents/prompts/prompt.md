@@ -48,12 +48,10 @@ This object drives the UI and interactivity of the node.
 
 Populate these fields to enable specific UI widgets inside the node.
 
-| Widget         | Field        | JSON Structure                                                 |
-| -------------- | ------------ | -------------------------------------------------------------- |
-| **Properties** | `properties` | `[{"label": "Gain", "value": "0.5"}, ...]`                     |
-| **Toggles**    | `toggles`    | `[{"label": "Bypass", "checked": true}, ...]`                  |
-| **Buttons**    | `actions`    | `[{"label": "Start", "type": "primary", "icon": "play"}, ...]` |
-| **Sparkline**  | `trendData`  | `[10, 25, 40, 45, 60]` (Array of numbers)                      |
+| Widget         | Field         | JSON Structure                                |
+| -------------- | ------------- | --------------------------------------------- |
+| **Properties** | `properties`  | `[{"label": "Gain", "value": "0.5"}, ...]`    |
+| **Info**       | `description` | `"Maintains system pressure at safe levels."` |
 
 ---
 
@@ -92,14 +90,14 @@ Save this as `system-config.json` to load the Dual Pump Logic system.
 				"meta": {
 					"tagId": "PT-1000",
 					"unit": "PSI",
+					"description": "Monitors the main discharge pressure.",
 					"minValue": 0,
 					"maxValue": 150,
 					"narrativeRef": "Primary feedback sensor.",
 					"properties": [
 						{ "label": "Hi-Hi Limit", "value": "85.0 PSI" },
 						{ "label": "Lo-Lo Limit", "value": "20.0 PSI" }
-					],
-					"trendData": [55, 56, 57, 58, 59, 58, 58, 58, 58, 58]
+					]
 				}
 			}
 		},
@@ -137,9 +135,6 @@ Save this as `system-config.json` to load the Dual Pump Logic system.
 				"meta": {
 					"unit": "% Spd",
 					"narrativeRef": "Running in Auto.",
-					"actions": [
-						{ "label": "Stop", "type": "danger", "icon": "stop" }
-					],
 					"properties": [{ "label": "Amps", "value": "12.4 A" }]
 				}
 			}
