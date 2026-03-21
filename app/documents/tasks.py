@@ -74,12 +74,12 @@ def process_document_pipeline(document_id: str, file_path: str, parsing_strategy
         )
 
         print("Running Image Parser Agent...")
-        image_parser_agent.run_image_parser(parsed_output["metadata"]["markdown_path"], parser_type= 2 if parsing_strategy == "accurate" else 1)
-        # mock_image_parser(
-        #     md_file_path=parsed_output["metadata"]["markdown_path"],
-        #     output_dir=os.path.dirname(parsed_output["metadata"]["markdown_path"]),
-        #     new_filename=os.path.basename(parsed_output["metadata"]["markdown_path"]).replace(".md", "_enriched.md")
-        # )
+        # image_parser_agent.run_image_parser(parsed_output["metadata"]["markdown_path"], parser_type= 2 if parsing_strategy == "accurate" else 1)
+        mock_image_parser(
+            md_file_path=parsed_output["metadata"]["markdown_path"],
+            output_dir=os.path.dirname(parsed_output["metadata"]["markdown_path"]),
+            new_filename=os.path.basename(parsed_output["metadata"]["markdown_path"]).replace(".md", "_enriched.md")
+        )
         update_parsed_document(document_id, "document_image_parsed_output_file_path", parsed_output["metadata"]["markdown_path"]+"_enriched.md")
 
         update_progress(

@@ -16,7 +16,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.tools import Tool
 
 # --- CREWAI IMPORTS ---
-from crewai import Agent, Task, Crew, Process
+try:
+    from crewai import Agent, Task, Crew, Process
+except ImportError:
+    Agent = Task = Crew = Process = None
 
 # Database Imports
 from db.database import parsed_documents_collection, chat_messages_collection
@@ -147,9 +150,14 @@ class RAGEngine:
         except: return "search"
 
     # --- STRATEGY 1: RE-ACT AGENT (VIA CREWAI) ---
-    async def _generate_react_response(self, query: str, doc_paths: List[dict], history: List[object]) -> Tuple[str, List[dict]]:
+    async def _generate_react_response(self, query: str, doc_paths: List[dict], history: List[object]) -> Tuple[str, List[dict], str]:
         print("--- Executing ReACT Mode via CrewAI ---")
         retrieved_docs_log = []
+
+        if Agent is None or Crew is None or Task is None or Process is None:
+            print("CrewAI library not available; falling back to standard retrieval.")
+            fallback_text = "CrewAI support is not installed; using standard RAG response instead."
+            return fallback_text, [], await self._generate_short_summary(fallback_text)
 
         def search_tool_func(q: str):
             docs = self._retrieve_context(doc_paths, q, k=3)
@@ -184,16 +192,22 @@ class RAGEngine:
             agent=analyst
         )
 
-        crew = Crew(agents=[analyst], tasks=[task], process=Process.sequential, verbose=True)
+        crew = Crew(agents=[analyst], tasks=[task], process=getattr(Process, 'sequential', Process), verbose=True)
         try:
-            result = await asyncio.to_thread(crew.kickoff)
-            return str(result), retrieved_docs_log
+            crew_method = getattr(crew, 'kickoff', None) or getattr(crew, 'run', None)
+            if crew_method is None:
+                raise RuntimeError('Crew execution method not found on Crew object')
+            result = await asyncio.to_thread(crew_method)
+            response_text = str(result)
         except Exception as e:
             print(f"CrewAI Error: {e}")
-            return "I encountered an error with the Agent.", []
+            response_text = "I encountered an error with the Agent. Falling back to RAG text."
+
+        response_summary = await self._generate_short_summary(response_text)
+        return response_text, retrieved_docs_log, response_summary
 
     # --- STRATEGY 2: FLARE (Active Retrieval) ---
-    async def _generate_flare_response(self, query: str, doc_paths: List[dict], history: List[object]) -> Tuple[str, List[dict]]:
+    async def _generate_flare_response(self, query: str, doc_paths: List[dict], history: List[object]) -> Tuple[str, List[dict], str]:
         print("--- Executing Flare Mode ---")
         # 1. Draft
         draft_chain = ChatPromptTemplate.from_messages([("system", "Expert Assistant."), MessagesPlaceholder(variable_name="history"), ("human", "{query}")]) | self.summarizer_llm | StrOutputParser()
@@ -222,12 +236,14 @@ class RAGEngine:
         ])
         refine_chain = refine_prompt | self.llm | StrOutputParser()
         
-        final_answer = await refine_chain.ainvoke({
+        final_answer_obj = await refine_chain.ainvoke({
             "query": query,
             "draft": draft_answer,
             "context": context_text
         })
-        return final_answer, retrieved_docs
+        final_answer = final_answer_obj.content if hasattr(final_answer_obj, 'content') else str(final_answer_obj)
+        response_summary = await self._generate_short_summary(final_answer)
+        return final_answer, retrieved_docs, response_summary
 
     # --- STRATEGY 3: MAP REDUCE (Token Overflow) ---
     async def _execute_map_reduce(self, query: str, large_context: str, history: List[object]) -> str:
@@ -300,11 +316,11 @@ class RAGEngine:
 
         # 2. ReACT (CrewAI)
         elif mode == "ReACT" and len(doc_paths) > 0:
-            response_content, retrieved_docs = await self._generate_react_response(query, doc_paths, history_messages)
+            response_content, retrieved_docs, response_summary = await self._generate_react_response(query, doc_paths, history_messages)
 
         # 3. Flare
         elif mode == "Flare" and len(doc_paths) > 0:
-            response_content, retrieved_docs = await self._generate_flare_response(query, doc_paths, history_messages)
+            response_content, retrieved_docs, response_summary = await self._generate_flare_response(query, doc_paths, history_messages)
 
         # 4. Standard RAG (Auto/Default)
         else:
